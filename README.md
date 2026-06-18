@@ -4,6 +4,14 @@ AveFlow Video is a full-stack monorepo application that automates the creation o
 
 ---
 
+## Screenshots
+
+| Main Dashboard | Video Preview & Layout |
+| --- | --- |
+| ![Main Dashboard](./screenshot/web1.png) | ![Video Preview & Layout](./screenshot/web2.png) |
+
+---
+
 ## Repository Structure
 
 ```text

@@ -79,8 +79,13 @@ export async function POST(req: NextRequest) {
 
       if (renderResponse.ok) {
         const data = await renderResponse.json();
+        let videoUrl = data.videoUrl;
+        if (videoUrl && videoUrl.includes('/outputs/renders/')) {
+          const filename = videoUrl.split('/').pop();
+          videoUrl = `/api/renders/${filename}`;
+        }
         return NextResponse.json({
-          videoUrl: data.videoUrl,
+          videoUrl,
           isMock: false,
           message: data.message || 'Rendered with ffmpeg storyboard pipeline.',
         });

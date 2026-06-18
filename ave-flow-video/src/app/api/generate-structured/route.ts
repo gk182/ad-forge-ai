@@ -63,8 +63,14 @@ export async function POST(req: NextRequest) {
 
     const data = await response.json();
 
+    let videoUrl = data.videoUrl;
+    if (videoUrl && videoUrl.includes('/outputs/renders/')) {
+      const filename = videoUrl.split('/').pop();
+      videoUrl = `/api/renders/${filename}`;
+    }
+
     return NextResponse.json({
-      videoUrl: data.videoUrl,
+      videoUrl,
       script: data.script,
       duration: data.duration,
       voice: data.voice,
