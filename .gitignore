@@ -1,0 +1,67 @@
+# Monorepo Git Ignore
+
+# --- Frontend (Next.js) ---
+ave-flow-video/node_modules/
+ave-flow-video/.next/
+ave-flow-video/out/
+ave-flow-video/build/
+ave-flow-video/.env
+ave-flow-video/.env.local
+ave-flow-video/.env.development.local
+ave-flow-video/.env.test.local
+ave-flow-video/.env.production.local
+ave-flow-video/*.tsbuildinfo
+ave-flow-video/next-env.d.ts
+
+# --- Backend (Python FastAPI) ---
+ave-flow-video-backend/__pycache__/
+ave-flow-video-backend/**/*.py[cod]
+ave-flow-video-backend/**/*.pyo
+ave-flow-video-backend/**/*.pyd
+ave-flow-video-backend/.Python
+ave-flow-video-backend/build/
+ave-flow-video-backend/develop-eggs/
+ave-flow-video-backend/dist/
+ave-flow-video-backend/downloads/
+ave-flow-video-backend/eggs/
+ave-flow-video-backend/.eggs/
+ave-flow-video-backend/lib/
+ave-flow-video-backend/lib64/
+ave-flow-video-backend/parts/
+ave-flow-video-backend/sdist/
+ave-flow-video-backend/var/
+ave-flow-video-backend/wheels/
+ave-flow-video-backend/pip-wheel-metadata/
+ave-flow-video-backend/share/python-wheels/
+ave-flow-video-backend/*.egg-info/
+ave-flow-video-backend/.installed.cfg
+ave-flow-video-backend/*.egg
+ave-flow-video-backend/MANIFEST
+ave-flow-video-backend/.venv/
+ave-flow-video-backend/venv/
+ave-flow-video-backend/ENV/
+ave-flow-video-backend/env/
+ave-flow-video-backend/pip-log.txt
+ave-flow-video-backend/pip-delete-this-directory.txt
+
+# --- Backend Temporary/Outputs ---
+ave-flow-video-backend/outputs/renders/*
+!ave-flow-video-backend/outputs/renders/.gitkeep
+ave-flow-video-backend/outputs/renders/_tmp/
+ave-flow-video-backend/outputs/result.md
+ave-flow-video-backend/dumps/
+ave-flow-video-backend/tmp/
+ave-flow-video-backend/__tmp_app_store.pyc*
+
+# --- OS & IDEs ---
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.swp
+*.swo
+*.log
