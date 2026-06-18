@@ -139,85 +139,56 @@ export function VideoPreview({ result }: VideoPreviewProps) {
       <div className="flex flex-col lg:flex-row gap-6 items-start">
         <div className="relative mx-auto w-[320px] aspect-[9/16] rounded-3xl overflow-hidden bg-black shadow-2xl shadow-[var(--primary)]/10 border border-[var(--border)]">
 
-          {layout === 'greenscreen' && (
-            <video
-              ref={videoRef}
-              src={result.videoUrl}
-              className="absolute inset-0 w-full h-full object-cover z-0"
-              loop
-              playsInline
-              onTimeUpdate={handleTimeUpdate}
-              onLoadedMetadata={handleLoadedMetadata}
-              onEnded={handleVideoEnded}
-              preload="auto"
-            />
+          {/* Splitscreen Product Card */}
+          {layout === 'splitscreen' && result.productData.image && (
+            <div className="absolute top-12 left-0 right-0 h-[calc(50%-48px)] bg-neutral-900/60 flex items-center justify-center p-4 z-0">
+              <img
+                src={result.productData.image}
+                alt={result.productData.title}
+                className="max-w-full max-h-full object-contain rounded-xl shadow-lg bg-white"
+              />
+            </div>
           )}
 
-          {layout === 'splitscreen' && (
+          {/* Classic Product Center Stage */}
+          {layout === 'classic' && result.productData.image && (
             <>
-              {result.productData.image && (
-                <div className="absolute top-12 left-0 right-0 h-[calc(50%-48px)] bg-neutral-900/60 flex items-center justify-center p-4 z-0">
-                  <img
-                    src={result.productData.image}
-                    alt={result.productData.title}
-                    className="max-w-full max-h-full object-contain rounded-xl shadow-lg bg-white"
-                  />
-                </div>
-              )}
-              <div className="absolute bottom-0 left-0 right-0 h-[50%] overflow-hidden border-t border-white/10 z-0">
-                <video
-                  ref={videoRef}
-                  src={result.videoUrl}
-                  className="w-full h-full object-cover"
-                  loop
-                  playsInline
-                  onTimeUpdate={handleTimeUpdate}
-                  onLoadedMetadata={handleLoadedMetadata}
-                  onEnded={handleVideoEnded}
-                  preload="auto"
+              <div className="absolute inset-0 z-0">
+                <img
+                  src={result.productData.image}
+                  alt=""
+                  className="w-full h-full object-cover scale-125 blur-md opacity-40"
+                />
+                <div className="absolute inset-0 bg-gradient-to-b from-black/40 via-transparent to-black/80" />
+              </div>
+              <div className="absolute inset-0 flex items-center justify-center px-6 z-0">
+                <img
+                  src={result.productData.image}
+                  alt={result.productData.title}
+                  className="max-w-full max-h-[45%] object-contain rounded-2xl shadow-lg bg-white"
                 />
               </div>
             </>
           )}
 
-          {layout === 'classic' && (
-            <>
-              {result.productData.image && (
-                <div className="absolute inset-0 z-0">
-                  <img
-                    src={result.productData.image}
-                    alt=""
-                    className="w-full h-full object-cover scale-125 blur-md opacity-40"
-                  />
-                  <div className="absolute inset-0 bg-gradient-to-b from-black/40 via-transparent to-black/80" />
-                </div>
-              )}
-
-              {result.productData.image && (
-                <div className="absolute inset-0 flex items-center justify-center px-6 z-0">
-                  <img
-                    src={result.productData.image}
-                    alt={result.productData.title}
-                    className="max-w-full max-h-[45%] object-contain rounded-2xl shadow-lg bg-white"
-                  />
-                </div>
-              )}
-
-              <div className="absolute bottom-24 right-3 w-[90px] h-[90px] rounded-2xl overflow-hidden border-2 border-white/20 shadow-lg z-10">
-                <video
-                  ref={videoRef}
-                  src={result.videoUrl}
-                  className="w-full h-full object-cover"
-                  loop
-                  playsInline
-                  onTimeUpdate={handleTimeUpdate}
-                  onLoadedMetadata={handleLoadedMetadata}
-                  onEnded={handleVideoEnded}
-                  preload="auto"
-                />
-              </div>
-            </>
-          )}
+          {/* Single video element with dynamic styling based on layout */}
+          <video
+            ref={videoRef}
+            src={result.videoUrl}
+            className={`transition-all duration-300 ${
+              layout === 'greenscreen'
+                ? 'absolute inset-0 w-full h-full object-cover z-0'
+                : layout === 'splitscreen'
+                ? 'absolute bottom-0 left-0 right-0 h-[50%] w-full object-cover border-t border-white/10 z-0'
+                : 'absolute bottom-24 right-3 w-[90px] h-[90px] rounded-2xl border-2 border-white/20 shadow-lg object-cover z-10'
+            }`}
+            loop
+            playsInline
+            onTimeUpdate={handleTimeUpdate}
+            onLoadedMetadata={handleLoadedMetadata}
+            onEnded={handleVideoEnded}
+            preload="auto"
+          />
 
           <button
             onClick={togglePlay}
@@ -259,7 +230,6 @@ export function VideoPreview({ result }: VideoPreviewProps) {
                   key={item.id}
                   onClick={() => {
                     setLayout(item.id as PreviewLayout);
-                    handleRestart();
                   }}
                   className={`flex flex-col items-center gap-2 p-3 rounded-xl border text-center transition-all duration-300 ${
                     layout === item.id
