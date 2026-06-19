@@ -1,34 +1,43 @@
 'use client';
 
 import { useState, useCallback } from 'react';
-import { Settings, Zap, Film, Sparkles, ArrowRight } from 'lucide-react';
+import { Settings, Film, Sparkles, ArrowLeft } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { URLInput } from './components/URLInput';
+import { AssetSelector } from './components/AssetSelector';
+import { StudioEditor } from './components/StudioEditor';
 import { SettingsModal } from '@/features/settings/SettingsModal';
 import { getApiKeys } from '@/features/settings/settings.storage';
-import { PipelineStepper } from './components/PipelineStepper';
-import { VideoPreview } from './components/VideoPreview';
-import { runPipeline, INITIAL_STEPS } from '@/features/pipeline/runPipeline';
-import type { PipelineStep, PipelineResult, StepStatus } from '@/features/pipeline/pipeline.types';
 import type { ScriptTone } from '@/features/settings/URLInput.types';
 import { SITE_NAME, SITE_TAGLINE } from '@/config/site';
 
+type WorkflowStep = 'input' | 'scraping' | 'assets' | 'scripting' | 'studio';
+
+interface ProductData {
+  title: string;
+  description: string;
+  image: string;
+  markdown: string;
+  screenshots: string[];
+  videos: string[];
+}
+
 export function HomeView() {
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [steps, setSteps] = useState<PipelineStep[]>(INITIAL_STEPS);
-  const [result, setResult] = useState<PipelineResult | null>(null);
-  const [showPipeline, setShowPipeline] = useState(false);
+  const [workflowStep, setWorkflowStep] = useState<WorkflowStep>('input');
+  
+  // Pipeline settings saved from URLInput
+  const [tone, setTone] = useState<ScriptTone>('fun');
+  const [duration, setDuration] = useState(30);
 
-  const handleStepChange = useCallback((stepId: string, status: StepStatus, error?: string) => {
-    setSteps((previous) =>
-      previous.map((step) => (step.id === stepId ? { ...step, status, error } : step))
-    );
-  }, []);
+  // Loaded data states
+  const [productData, setProductData] = useState<ProductData | null>(null);
+  const [scriptData, setScriptData] = useState<any | null>(null);
 
-  const handleGenerate = async (
+  // Scrape trigger
+  const handleScrape = async (
     url: string,
-    tone: ScriptTone,
+    selectedTone: ScriptTone,
     options: { duration: number; voiceId: string; useFreeTTS: boolean }
   ) => {
     const apiKeys = getApiKeys();
@@ -39,55 +48,99 @@ export function HomeView() {
       return;
     }
 
-    if (!options.useFreeTTS && !apiKeys.elevenLabsApiKey) {
-      toast.error('Please add ElevenLabs API key or switch to Free TTS.', { duration: 5000 });
-      setSettingsOpen(true);
-      return;
-    }
-
-    setResult(null);
-    setSteps(INITIAL_STEPS);
-    setShowPipeline(true);
-    setIsProcessing(true);
-
-    // Cleanup previous render to save disk space
-    if (result?.videoUrl) {
-      const prevFilename = result.videoUrl.split('/').pop();
-      if (prevFilename) {
-        fetch(`/api/cleanup?file=${encodeURIComponent(prevFilename)}`, { method: 'DELETE' }).catch(() => {});
-      }
-    }
+    setTone(selectedTone);
+    setDuration(options.duration);
+    setProductData(null);
+    setScriptData(null);
+    setWorkflowStep('scraping');
 
     try {
-      const pipelineResult = await runPipeline(
-        url,
-        apiKeys,
-        handleStepChange,
-        tone,
-        options.duration,
-        options.voiceId,
-        options.useFreeTTS
-      );
-      setResult(pipelineResult);
+      const response = await fetch('/api/scrape', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url }),
+      });
+      const data = await response.json();
+      
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to scrape product data');
+      }
 
-      toast.success(
-        pipelineResult.isMockVideo
-          ? 'Video ad generated. Using demo avatar.'
-          : 'Video ad generated successfully!',
-        { icon: '🎬', duration: 4000 }
-      );
+      setProductData(data);
+      setWorkflowStep('assets');
+      toast.success('Product details crawled! Now choose your media assets.', { icon: '🔍' });
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Pipeline failed';
+      const message = error instanceof Error ? error.message : 'Scraping failed';
       toast.error(message, { duration: 6000 });
-    } finally {
-      setIsProcessing(false);
+      setWorkflowStep('input');
     }
   };
 
+  // Script write trigger
+  const handleGenerateScript = async (
+    selectedImages: string[],
+    videoCaptures: string[],
+    customNotes: string
+  ) => {
+    if (!productData) return;
+    
+    const apiKeys = getApiKeys();
+    setWorkflowStep('scripting');
+
+    try {
+      const response = await fetch('/api/generate-script-multimodal', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: productData.title,
+          description: productData.description,
+          markdown: productData.markdown,
+          selectedImages,
+          videoCaptures,
+          productVideos: productData.videos || [],
+          tone,
+          targetDuration: duration,
+          geminiApiKey: apiKeys.geminiApiKey,
+          geminiModel: apiKeys.geminiModel || 'gemini-2.5-flash',
+          customNotes,
+        }),
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to write script');
+      }
+
+      setScriptData(data);
+      setWorkflowStep('studio');
+      toast.success('AI Script & Storyboard generated! Welcome to Remotion Studio.', { icon: '✨' });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'AI analysis failed';
+      toast.error(message, { duration: 6000 });
+      setWorkflowStep('assets');
+    }
+  };
+
+  const handleReset = () => {
+    setProductData(null);
+    setScriptData(null);
+    setWorkflowStep('input');
+  };
+
   return (
-    <main className="relative z-10 flex-1">
-      <header className="flex items-center justify-between px-6 py-4 border-b border-[var(--border)]/50">
+    <main className="relative z-10 flex-1 flex flex-col min-h-screen">
+      {/* Header */}
+      <header className="flex items-center justify-between px-6 py-4 border-b border-[var(--border)]/50 bg-black/20 backdrop-blur-md">
         <div className="flex items-center gap-3">
+          {workflowStep !== 'input' && (
+            <button
+              onClick={handleReset}
+              className="p-2 -ml-2 rounded-xl bg-white/5 border border-[var(--border)] hover:bg-white/10 hover:border-zinc-500 text-zinc-300 transition-all"
+              title="Start over"
+            >
+              <ArrowLeft className="w-4 h-4" />
+            </button>
+          )}
           <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-[var(--primary)] to-[var(--secondary)] flex items-center justify-center">
             <Film className="w-5 h-5 text-white" />
           </div>
@@ -108,71 +161,91 @@ export function HomeView() {
         </button>
       </header>
 
-      <section className="px-6 pt-16 pb-12 text-center">
-        <div className="animate-fade-in">
-          <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-[var(--primary)]/10 border border-[var(--primary)]/20 mb-6">
-            <Sparkles className="w-3.5 h-3.5 text-[var(--primary)]" />
-            <span className="text-xs font-medium text-[var(--primary)]">Powered by AI</span>
+      {/* Main Content Area */}
+      <div className="flex-1 py-10 px-6">
+        
+        {/* State 1: Input URL form */}
+        {workflowStep === 'input' && (
+          <div className="space-y-10">
+            <section className="text-center pt-10">
+              <div className="animate-fade-in">
+                <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-[var(--primary)]/10 border border-[var(--primary)]/20 mb-6">
+                  <Sparkles className="w-3.5 h-3.5 text-[var(--primary)]" />
+                  <span className="text-xs font-medium text-[var(--primary)]">Remotion Video Studio</span>
+                </div>
+              </div>
+
+              <h2 className="animate-slide-up text-4xl sm:text-5xl lg:text-6xl font-extrabold tracking-tight leading-[1.1] max-w-3xl mx-auto">
+                Turn Any Product Into a <span className="gradient-text">Viral Video Ad</span>
+              </h2>
+
+              <p className="animate-slide-up delay-200 mt-5 text-base sm:text-lg text-[var(--text-secondary)] max-w-xl mx-auto leading-relaxed">
+                Scrape media assets, capture custom video frames, edit with Remotion, and export TikTok reviewer-style video ads.
+              </p>
+            </section>
+
+            <section className="animate-slide-up delay-400">
+              <URLInput onGenerate={handleScrape} isLoading={false} />
+            </section>
           </div>
-        </div>
+        )}
 
-        <h2 className="animate-slide-up text-4xl sm:text-5xl lg:text-6xl font-extrabold tracking-tight leading-[1.1] max-w-3xl mx-auto">
-          Turn Any Product Into a <span className="gradient-text">Viral Video Ad</span>
-        </h2>
-
-        <p className="animate-slide-up delay-200 mt-5 text-base sm:text-lg text-[var(--text-secondary)] max-w-xl mx-auto leading-relaxed">
-          Paste a product URL, choose your script tone, and watch AI generate a TikTok-style video
-          ad in one click.
-        </p>
-
-        <div className="animate-slide-up delay-300 flex flex-wrap items-center justify-center gap-3 mt-8">
-          {[
-            { icon: <Zap className="w-3.5 h-3.5" />, label: 'URL Scraping' },
-            { icon: <ArrowRight className="w-3 h-3 text-[var(--muted)]" />, label: '' },
-            { icon: <Sparkles className="w-3.5 h-3.5" />, label: 'AI Script' },
-          ].map((item, index) =>
-            item.label ? (
-              <span
-                key={index}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/5 border border-[var(--border)] text-xs font-medium text-[var(--text-secondary)]"
-              >
-                {item.icon}
-                {item.label}
-              </span>
-            ) : (
-              <span key={index}>{item.icon}</span>
-            )
-          )}
-        </div>
-      </section>
-
-      <section className="px-6 pb-10 animate-slide-up delay-400">
-        <URLInput onGenerate={handleGenerate} isLoading={isProcessing} />
-      </section>
-
-      {showPipeline && (
-        <section className="px-6 pb-10 max-w-2xl mx-auto animate-fade-in">
-          <div className="glass-card p-6">
-            <PipelineStepper steps={steps} />
+        {/* State 2: Scraping Crawler Loading State */}
+        {workflowStep === 'scraping' && (
+          <div className="flex flex-col items-center justify-center py-24 space-y-6 max-w-md mx-auto text-center">
+            <div className="relative">
+              <div className="w-20 h-20 border-4 border-[var(--primary)]/20 border-t-[var(--primary)] rounded-full animate-spin" />
+              <Film className="w-8 h-8 text-[var(--primary)] absolute top-6 left-6 animate-pulse" />
+            </div>
+            <div className="space-y-2">
+              <h3 className="text-xl font-bold text-white">Scraping Product Information</h3>
+              <p className="text-sm text-[var(--text-secondary)] leading-relaxed">
+                Reading description, downloading high-resolution media galleries, and extracting videos from the product link. Please wait...
+              </p>
+            </div>
           </div>
-        </section>
-      )}
+        )}
 
-      {result && (
-        <section className="px-6 pb-20 max-w-5xl mx-auto">
-          <div className="mb-6 text-center">
-            <h3 className="text-2xl font-bold text-white">Your Video Ad is Ready</h3>
-            <p className="text-sm text-[var(--text-secondary)] mt-1">
-              Preview your AI-generated TikTok video ad below
-            </p>
+        {/* State 3: Media Selection & Keyframes Capture Screen */}
+        {workflowStep === 'assets' && productData && (
+          <AssetSelector
+            productData={productData}
+            onGenerateScript={handleGenerateScript}
+            isLoading={false}
+          />
+        )}
+
+        {/* State 4: Script writing loading State */}
+        {workflowStep === 'scripting' && (
+          <div className="flex flex-col items-center justify-center py-24 space-y-6 max-w-md mx-auto text-center">
+            <div className="relative">
+              <div className="w-20 h-20 border-4 border-[var(--secondary)]/20 border-t-[var(--secondary)] rounded-full animate-spin" />
+              <Sparkles className="w-8 h-8 text-[var(--secondary)] absolute top-6 left-6 animate-pulse" />
+            </div>
+            <div className="space-y-2">
+              <h3 className="text-xl font-bold text-white">Analyzing Media & Writing Script</h3>
+              <p className="text-sm text-[var(--text-secondary)] leading-relaxed">
+                Gemini is inspecting the chosen images and video keyframe captures to craft a highly engaging marketing script with scene-accurate durations.
+              </p>
+            </div>
           </div>
-          <VideoPreview result={result} />
-        </section>
-      )}
+        )}
 
-      <footer className="mt-auto border-t border-[var(--border)]/30 px-6 py-6">
+        {/* State 5: Remotion Studio Editor */}
+        {workflowStep === 'studio' && scriptData && productData && (
+          <StudioEditor
+            initialScript={scriptData}
+            productImages={[productData.image, ...(productData.screenshots || [])].filter(Boolean)}
+            productVideos={productData.videos || []}
+          />
+        )}
+
+      </div>
+
+      {/* Footer */}
+      <footer className="mt-auto border-t border-[var(--border)]/30 px-6 py-6 bg-black/10">
         <p className="text-center text-xs text-[var(--muted)]">
-          AveFlow Video. Built with Next.js, Firecrawl, Gemini, and D-ID.
+          AveFlow Video Editor. Built with Next.js, FastAPI, Remotion & Gemini.
         </p>
       </footer>
 
@@ -180,4 +253,3 @@ export function HomeView() {
     </main>
   );
 }
-

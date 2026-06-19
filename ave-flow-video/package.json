@@ -9,11 +9,17 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@google/generative-ai": "^0.24.1",
+    "@remotion/bundler": "^4.0.481",
+    "@remotion/google-fonts": "^4.0.481",
+    "@remotion/player": "^4.0.481",
+    "@remotion/renderer": "^4.0.481",
     "lucide-react": "^1.20.0",
     "next": "16.2.9",
     "react": "19.2.4",
     "react-dom": "19.2.4",
-    "react-hot-toast": "^2.6.0"
+    "react-hot-toast": "^2.6.0",
+    "remotion": "^4.0.481"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
