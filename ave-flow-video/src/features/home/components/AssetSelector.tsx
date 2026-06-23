@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useRef } from 'react';
-import { Camera, Image as ImageIcon, Video as VideoIcon, Check, Trash2, Sparkles, ArrowRight } from 'lucide-react';
+import { Camera, Image as ImageIcon, Video as VideoIcon, Check, Trash2, Sparkles, ArrowRight, Upload } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 interface AssetSelectorProps {
@@ -17,16 +17,33 @@ interface AssetSelectorProps {
 }
 
 export function AssetSelector({ productData, onGenerateScript, isLoading }: AssetSelectorProps) {
-  // Combine main image and screenshots
-  const allImages = [productData.image, ...(productData.screenshots || [])].filter(Boolean);
+  const [uploadedImages, setUploadedImages] = useState<string[]>([]);
+  const allImages = [...[productData.image, ...(productData.screenshots || [])].filter(Boolean), ...uploadedImages];
 
   // States
-  const [selectedImages, setSelectedImages] = useState<string[]>(allImages);
+  const [selectedImages, setSelectedImages] = useState<string[]>([...[productData.image, ...(productData.screenshots || [])].filter(Boolean)]);
   const [captures, setCaptures] = useState<string[]>([]);
   const [customNotes, setCustomNotes] = useState('');
 
   // Refs for video elements to allow frame capturing
   const videoRefs = useRef<{ [key: string]: HTMLVideoElement | null }>({});
+
+  const handleUploadImages = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!e.target.files) return;
+    const files = Array.from(e.target.files);
+    
+    files.forEach((file) => {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        if (event.target?.result) {
+          const base64Url = event.target.result as string;
+          setUploadedImages((prev) => [...prev, base64Url]);
+          setSelectedImages((prev) => [...prev, base64Url]);
+        }
+      };
+      reader.readAsDataURL(file);
+    });
+  };
 
   const toggleImage = (url: string) => {
     setSelectedImages((prev) =>
@@ -86,12 +103,19 @@ export function AssetSelector({ productData, onGenerateScript, isLoading }: Asse
         </div>
 
         {/* 1. Images Selection Grid */}
-        {allImages.length > 0 && (
-          <div className="space-y-3">
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
             <h4 className="text-sm font-semibold text-white flex items-center gap-2">
               <ImageIcon className="w-4 h-4 text-[var(--secondary)]" />
               Select Product Images ({selectedImages.length}/{allImages.length})
             </h4>
+            <label className="cursor-pointer flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--primary)]/10 border border-[var(--primary)]/30 hover:bg-[var(--primary)]/20 text-xs font-semibold text-[var(--primary)] transition-all">
+              <Upload className="w-3.5 h-3.5" />
+              Upload Image
+              <input type="file" multiple accept="image/*" className="hidden" onChange={handleUploadImages} />
+            </label>
+          </div>
+          {allImages.length > 0 && (
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
               {allImages.map((url, idx) => {
                 const isSelected = selectedImages.includes(url);
@@ -128,8 +152,8 @@ export function AssetSelector({ productData, onGenerateScript, isLoading }: Asse
                 );
               })}
             </div>
-          </div>
-        )}
+          )}
+        </div>
 
         {/* 2. Video Capture Player */}
         {productData.videos && productData.videos.length > 0 && (

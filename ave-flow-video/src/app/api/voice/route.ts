@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-
-const BACKEND_URL = process.env.BACKEND_URL || 'http://127.0.0.1:8000';
+import { BACKEND_URL, serverConfig } from '@/config/env';
 
 // Helper to chunk text and fetch Google Translate TTS
 async function generateFreeTTS(text: string): Promise<Buffer> {
@@ -50,7 +49,9 @@ async function generateFreeTTS(text: string): Promise<Buffer> {
 
 export async function POST(req: NextRequest) {
   try {
-    const { script, elevenLabsApiKey, elevenLabsVoiceId, useFreeTTS } = await req.json();
+    const { script, elevenLabsApiKey: reqElevenLabsApiKey, elevenLabsVoiceId, useFreeTTS } = await req.json();
+
+    const elevenLabsApiKey = reqElevenLabsApiKey || serverConfig.elevenLabsApiKey;
 
     if (!script || typeof script !== 'string') {
       return NextResponse.json({ error: 'Script text is required.' }, { status: 400 });
@@ -65,7 +66,7 @@ export async function POST(req: NextRequest) {
 
     // ElevenLabs flow (via FastAPI backend proxy)
     if (!elevenLabsApiKey) {
-      return NextResponse.json({ error: 'ElevenLabs API Key is required.' }, { status: 400 });
+      return NextResponse.json({ error: 'ElevenLabs API Key is required. Please set it in Settings or system .env.' }, { status: 400 });
     }
 
     console.log('[Voice API] Forwarding to FastAPI backend for ElevenLabs TTS...');

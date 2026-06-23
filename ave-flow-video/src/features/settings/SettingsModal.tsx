@@ -18,6 +18,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
   const [voiceOption, setVoiceOption] = useState('en-US-JennyNeural');
   const [promptTemplate, setPromptTemplate] = useState('');
   const [saved, setSaved] = useState(false);
+  const [serverConfig, setServerConfig] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     if (!isOpen) return;
@@ -33,6 +34,19 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
     setVoiceOption(getStoredSetting('did_voice_id', 'en-US-JennyNeural'));
     setPromptTemplate(getStoredSetting('prompt_template'));
     setSaved(false);
+
+    // Fetch server configuration environment keys presence
+    fetch('/api/config')
+      .then((res) => res.json())
+      .then((data) => {
+        setServerConfig({
+          gemini_api_key: data.hasGeminiApiKey,
+          elevenlabs_api_key: data.hasElevenLabsApiKey,
+          firecrawl_api_key: data.hasFirecrawlApiKey,
+          did_api_key: data.hasDidApiKey,
+        });
+      })
+      .catch((err) => console.error('Failed to load server configuration:', err));
   }, [isOpen]);
 
   const handleSave = () => {
@@ -82,7 +96,8 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
         <div className="px-6 py-5 space-y-5 max-h-[70vh] overflow-y-auto">
           {KEY_FIELDS.map((field) => {
             const value = keys[field.storageKey] || '';
-            const isConfigured = value.length > 0;
+            const isLocalConfigured = value.length > 0;
+            const isServerConfigured = serverConfig[field.storageKey] || false;
 
             return (
               <div key={field.key}>
@@ -90,13 +105,17 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                   <label className="text-sm font-medium text-[var(--foreground)]">
                     {field.label}
                   </label>
-                  {isConfigured ? (
-                    <span className="flex items-center gap-1 text-xs text-[var(--success)]">
-                      <CheckCircle2 className="w-3 h-3" /> Đã cấu hình
+                  {isLocalConfigured ? (
+                    <span className="flex items-center gap-1 text-xs text-[var(--success)]" title="Ghi đè cấu hình hệ thống (Lưu ở trình duyệt)">
+                      <CheckCircle2 className="w-3 h-3" /> Đã cấu hình (Trình duyệt)
+                    </span>
+                  ) : isServerConfigured ? (
+                    <span className="flex items-center gap-1 text-xs text-sky-400" title="Đang dùng cấu hình từ tệp .env ở server">
+                      <CheckCircle2 className="w-3 h-3" /> Đã cấu hình (Hệ thống)
                     </span>
                   ) : (
                     <span className="flex items-center gap-1 text-xs text-[var(--muted)]">
-                      <AlertCircle className="w-3 h-3" /> Chưa có
+                      <AlertCircle className="w-3 h-3" /> Chưa cấu hình
                     </span>
                   )}
                 </div>
@@ -111,7 +130,11 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                         [field.storageKey]: event.target.value,
                       }))
                     }
-                    placeholder={field.placeholder}
+                    placeholder={
+                      isServerConfigured
+                        ? '•••••••• (Đang dùng cấu hình hệ thống)'
+                        : field.placeholder
+                    }
                     className="w-full px-4 py-3 pr-12 rounded-xl bg-[var(--background)] border border-[var(--border)] text-sm text-white placeholder-[var(--muted)] input-focus-ring transition-all"
                   />
                   <button

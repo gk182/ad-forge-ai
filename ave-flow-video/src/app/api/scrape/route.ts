@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { BACKEND_URL } from '@/config/env';
 
-const CRAWLER_BACKEND_URL = 'http://127.0.0.1:8000/scrape';
+const CRAWLER_BACKEND_URL = `${BACKEND_URL}/scrape`;
 
 export async function POST(req: NextRequest) {
   try {
@@ -68,7 +69,9 @@ export async function POST(req: NextRequest) {
       image: typeof image === 'string' ? image : '',
       markdown: data.markdown || '',
       screenshots: Array.isArray(data.screenshots) ? data.screenshots : [],
-      videos: Array.isArray(data.videos) ? data.videos : [],
+      videos: Array.isArray(data.videos) 
+        ? data.videos.filter((v: string) => !v.toLowerCase().endsWith('.m3u8') && !v.toLowerCase().endsWith('.ts') && !v.toLowerCase().endsWith('.mpd'))
+        : [],
     });
   } catch (error) {
     console.error('Scrape error:', error);

@@ -100,19 +100,52 @@ def parse_amazon_product(html_content, url):
     
     # 8. Images (Ảnh)
     images = []
+    
+    def get_base_img_url(url):
+        # Strip all Amazon size modifiers like ._AC_SR38,50_ or ._AC_SX679_
+        if not url: return None
+        return re.sub(r'\._.*?_\.(jpg|jpeg|png|gif)$', r'.\1', url)
+
+    # First, try to get all hiRes and large images from the raw HTML using regex
+    # Amazon often embeds the full image gallery inside script tags as JSON strings
+    hires = re.findall(r'hiRes[\"\']?\s*:\s*[\"\']([^\"\']+)[\"\']', html_content)
+    large = re.findall(r'large[\"\']?\s*:\s*[\"\']([^\"\']+)[\"\']', html_content)
+    
+    for url in hires + large:
+        base = get_base_img_url(url)
+        if base and base not in images and "m.media-amazon.com" in base:
+            images.append(base)
+
+    # Fallback to DOM elements
     alt_images = soup.select('#altImages ul li img')
     for img in alt_images:
         src = img.get('src')
         if src and not src.endswith('.gif') and 'play-button' not in src:
-            src_clean = re.sub(r'\._[A-Z0-9_]+_\.(jpg|jpeg|png|gif)$', r'.\1', src)
-            if src_clean not in images:
+            src_clean = get_base_img_url(src)
+            if src_clean and src_clean not in images:
                 images.append(src_clean)
                 
     landing_img = soup.find(id='landingImage')
     if landing_img:
+        # data-a-dynamic-image contains a JSON of high-res images
+        dynamic_images = landing_img.get('data-a-dynamic-image')
+        if dynamic_images:
+            try:
+                import json
+                img_dict = json.loads(dynamic_images)
+                for img_url in img_dict.keys():
+                    base_url = get_base_img_url(img_url)
+                    if base_url and base_url not in images:
+                        images.insert(0, base_url)
+            except Exception:
+                pass
+        
+        # Fallback to src
         main_src = landing_img.get('src')
-        if main_src and main_src not in images:
-            images.insert(0, main_src)
+        if main_src:
+            base_main = get_base_img_url(main_src)
+            if base_main and base_main not in images:
+                images.insert(0, base_main)
             
     data['images'] = images[:15]
     

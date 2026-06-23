@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { BACKEND_URL, serverConfig } from '@/config/env';
 
-const BACKEND_BASE_URL = 'http://127.0.0.1:8000';
+const BACKEND_BASE_URL = BACKEND_URL;
 const DID_API_URL = 'https://api.d-id.com';
 const DEFAULT_SOURCE_URL =
   'https://d-id-public-bucket.s3.us-west-2.amazonaws.com/alice.jpg';
@@ -45,14 +46,17 @@ export async function POST(req: NextRequest) {
   try {
     const {
       script,
-      didApiKey,
+      didApiKey: reqDidApiKey,
       avatarImageUrl,
       voiceId = 'en-US-JennyNeural',
       voiceProvider = 'microsoft',
       productData,
-      elevenLabsApiKey,
+      elevenLabsApiKey: reqElevenLabsApiKey,
       targetDuration,
     } = await req.json();
+
+    const elevenLabsApiKey = reqElevenLabsApiKey || serverConfig.elevenLabsApiKey;
+    const didApiKey = reqDidApiKey || serverConfig.didApiKey;
 
     if (!script || typeof script !== 'string') {
       return NextResponse.json({ error: 'Script text is required.' }, { status: 400 });

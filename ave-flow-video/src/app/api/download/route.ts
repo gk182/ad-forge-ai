@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { BACKEND_URL } from '@/config/env';
 
-const BACKEND_BASE_URL = 'http://127.0.0.1:8000';
+const BACKEND_BASE_URL = BACKEND_URL;
 
 export async function GET(req: NextRequest) {
   const filename = req.nextUrl.searchParams.get('file');

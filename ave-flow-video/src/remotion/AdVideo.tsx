@@ -132,15 +132,33 @@ const SceneMedia: React.FC<{
   }
 
   return (
-    <Img
-      src={scene.media_url}
-      style={{
-        width: '100%',
-        height: '100%',
-        objectFit: 'cover',
-        ...transformStyle,
-      }}
-    />
+    <div style={{ width: '100%', height: '100%', position: 'relative', overflow: 'hidden' }}>
+      {/* Blurred background for padding */}
+      <Img
+        src={scene.media_url}
+        style={{
+          position: 'absolute',
+          width: '120%',
+          height: '120%',
+          left: '-10%',
+          top: '-10%',
+          objectFit: 'cover',
+          filter: 'blur(40px) brightness(0.4)',
+          ...transformStyle,
+        }}
+      />
+      {/* Foreground image (not stretched, keeps aspect ratio) */}
+      <Img
+        src={scene.media_url}
+        style={{
+          position: 'absolute',
+          width: '100%',
+          height: '100%',
+          objectFit: 'contain',
+          ...transformStyle,
+        }}
+      />
+    </div>
   );
 };
 
@@ -194,7 +212,7 @@ const KaraokeSubtitles: React.FC<{
 
           switch (animationStyle) {
             case 'bounce':
-              const scaleVal = interpolate(age, [0, 3], [1.0, 1.25], {
+              const scaleVal = interpolate(age, [0, 3], [1.0, 1.15], {
                 extrapolateRight: 'clamp',
               });
               transform = `scale(${scaleVal})`;
@@ -242,11 +260,12 @@ const KaraokeSubtitles: React.FC<{
             key={idx}
             style={{
               display: 'inline-block',
-              margin: '6px 12px',
+              margin: '8px 18px',
               fontSize: '64px',
               fontWeight: 900,
               color,
               transform,
+              transformOrigin: 'center center',
               opacity,
               textShadow: textGlow
                 ? `0 0 20px ${highlightColor}, -4px -4px 0 #000, 4px -4px 0 #000, -4px 4px 0 #000, 4px 4px 0 #000`

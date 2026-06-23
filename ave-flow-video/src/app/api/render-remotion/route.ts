@@ -63,6 +63,10 @@ export async function POST(req: NextRequest) {
       outputLocation: outputFilePath,
       inputProps: props,
       codec: 'h264',
+      crf: 18, // Lower CRF means higher quality (0-51)
+      imageFormat: 'jpeg',
+      jpegQuality: 100,
+      pixelFormat: 'yuv420p',
       concurrency: 4,
     });
 

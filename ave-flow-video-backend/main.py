@@ -229,6 +229,8 @@ async def scrape_url(req: CrawlRequest):
                         image = products[0]['image']
                     if products and products[0].get('videos'):
                         videos = products[0].get('videos', [])
+                    if products:
+                        screenshots = [p['image'] for p in products if p.get('image')]
                 if is_product:
                     title = parsed_data.get('title', 'amazon_product')
                     description = parsed_data.get('description', '')
@@ -236,6 +238,7 @@ async def scrape_url(req: CrawlRequest):
                     videos = parsed_data.get('videos', [])
                     if images:
                         image = images[0]
+                        screenshots = images
                     
             elif is_app_store:
                 print("\n[Parsing] Detected App Store / Google Play Page...")
@@ -254,6 +257,24 @@ async def scrape_url(req: CrawlRequest):
                 md_content = result.markdown
                 title = "Generic Web Page"
                 description = ""
+                
+                # Extract media from crawl4ai's result.media
+                if result.media and isinstance(result.media, dict):
+                    images_data = result.media.get("images", [])
+                    if images_data:
+                        # Extract src and filter out empty ones
+                        img_urls = [img.get("src") for img in images_data if isinstance(img, dict) and img.get("src")]
+                        # Remove duplicates while preserving order
+                        seen = set()
+                        screenshots = [x for x in img_urls if not (x in seen or seen.add(x))]
+                        if screenshots:
+                            image = screenshots[0]
+                            
+                    videos_data = result.media.get("videos", [])
+                    if videos_data:
+                        vid_urls = [v.get("src") for v in videos_data if isinstance(v, dict) and v.get("src")]
+                        seen_vid = set()
+                        videos = [x for x in vid_urls if not (x in seen_vid or seen_vid.add(x))]
                 
             # Write to outputs/result.md ALWAYS
             result_md_path = "outputs/result.md"

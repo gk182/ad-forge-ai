@@ -57,8 +57,8 @@ export const DEFAULT_AVATAR_URL =
   'https://d-id-public-bucket.s3.us-west-2.amazonaws.com/alice.jpg';
 
 export const TTS_PROVIDERS = [
-  { id: 'free', label: 'Free (Microsoft Edge TTS)', cost: 'Free', icon: '🆓' },
-  { id: 'elevenlabs', label: 'ElevenLabs (Premium)', cost: 'Paid', icon: '💎' },
+  { id: 'free', label: 'Free (Microsoft Edge TTS)', cost: 'Free' },
+  { id: 'elevenlabs', label: 'ElevenLabs (Premium)', cost: 'Paid' },
 ] as const;
 
 export const PROMPT_TEMPLATE_PLACEHOLDER = `For example your style notes:

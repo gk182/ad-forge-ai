@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { BACKEND_URL, serverConfig } from '@/config/env';
 
-const BACKEND_BASE_URL = 'http://127.0.0.1:8000';
+const BACKEND_BASE_URL = BACKEND_URL;
 
 export async function POST(req: NextRequest) {
   try {
@@ -13,23 +14,26 @@ export async function POST(req: NextRequest) {
       videos,
       tone,
       targetDuration,
-      geminiApiKey,
+      geminiApiKey: reqGeminiApiKey,
       geminiModel,
-      elevenLabsApiKey,
+      elevenLabsApiKey: reqElevenLabsApiKey,
       useFreeTTS,
       customNotes,
     } = await req.json();
 
+    const geminiApiKey = reqGeminiApiKey || serverConfig.geminiApiKey;
+    const elevenLabsApiKey = reqElevenLabsApiKey || serverConfig.elevenLabsApiKey;
+
     if (!geminiApiKey) {
       return NextResponse.json(
-        { error: 'Gemini API key is required' },
+        { error: 'Gemini API key is required. Please set it in Settings or system .env.' },
         { status: 400 }
       );
     }
 
     if (!useFreeTTS && !elevenLabsApiKey) {
       return NextResponse.json(
-        { error: 'ElevenLabs API key is required when not using Free TTS' },
+        { error: 'ElevenLabs API key is required when not using Free TTS. Please set it in Settings or system .env.' },
         { status: 400 }
       );
     }

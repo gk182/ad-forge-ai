@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { Settings, Film, Sparkles, ArrowLeft } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { URLInput } from './components/URLInput';
@@ -33,6 +33,14 @@ export function HomeView() {
   // Loaded data states
   const [productData, setProductData] = useState<ProductData | null>(null);
   const [scriptData, setScriptData] = useState<any | null>(null);
+  const [serverConfig, setServerConfig] = useState<{ hasGeminiApiKey: boolean } | null>(null);
+
+  useEffect(() => {
+    fetch('/api/config')
+      .then((res) => res.json())
+      .then((data) => setServerConfig(data))
+      .catch((err) => console.error('Failed to load server config:', err));
+  }, []);
 
   // Scrape trigger
   const handleScrape = async (
@@ -41,9 +49,10 @@ export function HomeView() {
     options: { duration: number; voiceId: string; useFreeTTS: boolean }
   ) => {
     const apiKeys = getApiKeys();
+    const hasGemini = apiKeys.geminiApiKey || serverConfig?.hasGeminiApiKey;
 
-    if (!apiKeys.geminiApiKey) {
-      toast.error('Please add your Gemini API key in Settings first.', { duration: 5000 });
+    if (!hasGemini) {
+      toast.error('Please add your Gemini API key in Settings or set it in the server environment.', { duration: 5000 });
       setSettingsOpen(true);
       return;
     }

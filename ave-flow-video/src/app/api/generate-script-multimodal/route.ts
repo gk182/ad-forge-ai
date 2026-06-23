@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import { serverConfig } from '@/config/env';
 
 // Convert base64 string to Gemini part format
 function base64ToGenerativePart(base64String: string) {
@@ -46,13 +47,15 @@ export async function POST(req: NextRequest) {
       productVideos,  // array of crawled video URLs
       tone,
       targetDuration,
-      geminiApiKey,
+      geminiApiKey: reqGeminiApiKey,
       geminiModel = 'gemini-2.5-flash',
       customNotes = '',
     } = await req.json();
 
+    const geminiApiKey = reqGeminiApiKey || serverConfig.geminiApiKey;
+
     if (!geminiApiKey) {
-      return NextResponse.json({ error: 'Gemini API Key is required' }, { status: 400 });
+      return NextResponse.json({ error: 'Gemini API Key is required. Please set it in Settings or system .env.' }, { status: 400 });
     }
 
     // Initialize Gemini API
@@ -84,7 +87,12 @@ export async function POST(req: NextRequest) {
     // 2. Fetch and process selected product images (limit to first 4 to avoid token size blow-up)
     if (Array.isArray(selectedImages)) {
       const imagesToFetch = selectedImages.slice(0, 4);
-      const parts = await Promise.all(imagesToFetch.map((url) => urlToGenerativePart(url)));
+      const parts = await Promise.all(imagesToFetch.map(async (url) => {
+        if (url.startsWith('data:image/')) {
+          return base64ToGenerativePart(url);
+        }
+        return urlToGenerativePart(url);
+      }));
       for (const p of parts) {
         if (p) mediaParts.push(p);
       }
@@ -125,6 +133,17 @@ OUTPUT SCHEMA:
 }
 `;
 
+    // Map of IDs to base64 images to restore them later
+    const base64Map: Record<string, string> = {};
+    const displayImages = (selectedImages || []).map((url: string, index: number) => {
+      if (typeof url === 'string' && url.startsWith('data:image/')) {
+        const id = `uploaded_image_${index}`;
+        base64Map[id] = url;
+        return id;
+      }
+      return url;
+    });
+
     const userPrompt = `Create a video script for:
 Title: ${title}
 Description: ${description}
@@ -135,7 +154,7 @@ Target Duration: ${targetDuration} seconds
 Custom Instructions: ${customNotes || 'None'}
 
 Please map the "media_url" fields in "scenes" to the available image and video URLs:
-Images: ${JSON.stringify(selectedImages || [])}
+Images: ${JSON.stringify(displayImages)}
 Videos: ${JSON.stringify(productVideos || [])}
 *Note: Match image scenes with product images, and video scenes with the video sources.*`;
 
@@ -158,6 +177,16 @@ Videos: ${JSON.stringify(productVideos || [])}
     }
 
     const scriptData = JSON.parse(cleanJson);
+
+    // Restore base64 strings if they were selected
+    if (scriptData.scenes && Array.isArray(scriptData.scenes)) {
+      scriptData.scenes.forEach((scene: any) => {
+        if (scene.media_url && base64Map[scene.media_url]) {
+          scene.media_url = base64Map[scene.media_url];
+        }
+      });
+    }
+
     return NextResponse.json(scriptData);
   } catch (error) {
     console.error('[Gemini Multimodal API Error]', error);
