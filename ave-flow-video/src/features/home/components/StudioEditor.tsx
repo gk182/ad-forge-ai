@@ -4,6 +4,7 @@ import { useState, useRef, useMemo, useEffect } from 'react';
 import { Player, PlayerRef } from '@remotion/player';
 import { AdVideo } from '@/remotion/AdVideo';
 import type { Scene } from '@/remotion/AdVideo';
+import type { ScriptVariant } from '@/features/pipeline/pipeline.types';
 import {
   Play,
   Pause,
@@ -24,13 +25,12 @@ import toast from 'react-hot-toast';
 import { getApiKeys } from '@/features/settings/settings.storage';
 
 interface StudioEditorProps {
-  initialScript: {
-    script_text: string;
-    elevenlabs_voice_id: string;
-    scenes: Scene[];
-  };
+  selectedVariant: ScriptVariant;
+  variants: ScriptVariant[];
   productImages: string[];
   productVideos: string[];
+  sourceType?: 'amazon' | 'app_store' | 'website' | 'unknown';
+  confidence?: number;
   autoBuild?: boolean;
 }
 
@@ -68,31 +68,66 @@ const TRANSITION_TYPES = [
 
 type BuildPhase = 'idle' | 'generating-voice' | 'voice-ready' | 'rendering' | 'completed' | 'error';
 
+function isLikelyVideoUrl(url: string) {
+  if (!url) return false;
+  if (/^data:video\//i.test(url)) return true;
+  return /\.(mp4|webm|mov|m4v|ogg)(\?|#|$)/i.test(url);
+}
+
+function buildScenesFromVariant(
+  variant: ScriptVariant,
+  productImages: string[],
+  productVideos: string[]
+): Scene[] {
+  const fallbackImage =
+    productImages[0] ||
+    'https://images.unsplash.com/photo-1523275335684-37898b6baf30?auto=format&fit=crop&w=600&q=80';
+  const fallbackVideo = productVideos.find(isLikelyVideoUrl) || '';
+
+  return variant.scenes.map((scene) => {
+    const requestedVideo = scene.media_type === 'video';
+    const sceneLooksVideo = isLikelyVideoUrl(scene.media_url);
+    const resolvedVideoUrl = sceneLooksVideo ? scene.media_url : fallbackVideo;
+    const mediaType: 'image' | 'video' = requestedVideo && isLikelyVideoUrl(resolvedVideoUrl) ? 'video' : 'image';
+    const mediaUrl =
+      mediaType === 'video'
+        ? resolvedVideoUrl
+        : requestedVideo
+          ? fallbackImage
+          : scene.media_url || fallbackImage;
+
+    return {
+      ...scene,
+      media_type: mediaType,
+      media_url: mediaUrl,
+      duration: scene.duration || 3.5,
+      subtitle: scene.subtitle || 'Add subtitle here...',
+      motion: mediaType === 'video' ? 'static' : scene.motion || 'center_zoom',
+      transition_type: scene.transition_type || 'fade',
+      video_start_offset: mediaType === 'video' ? scene.video_start_offset || 0 : scene.video_start_offset,
+    };
+  });
+}
+
 export function StudioEditor({
-  initialScript,
+  selectedVariant,
+  variants,
   productImages,
   productVideos,
+  sourceType,
+  confidence,
   autoBuild = false,
 }: StudioEditorProps) {
   const playerRef = useRef<PlayerRef>(null);
   const autoBuildStartedRef = useRef(false);
   const buildLockRef = useRef(false);
+  const variantOptions = variants.length > 0 ? variants : [selectedVariant];
 
   // States
-  const [scenes, setScenes] = useState<Scene[]>(() => {
-    const hasVideos = productVideos && productVideos.length > 0;
-    return initialScript.scenes.map((s, idx) => {
-      // Prioritize crawled videos sequentially if available
-      const shouldAssignVideo = hasVideos && idx < productVideos.length;
-      return {
-        ...s,
-        media_type: shouldAssignVideo ? 'video' : (s.media_type || 'image'),
-        media_url: shouldAssignVideo ? productVideos[idx] : (s.media_url || ''),
-        video_start_offset: s.video_start_offset || 0,
-        transition_type: s.transition_type || 'fade',
-      };
-    });
-  });
+  const [activeVariantIndex, setActiveVariantIndex] = useState(0);
+  const [scenes, setScenes] = useState<Scene[]>(() =>
+    buildScenesFromVariant(selectedVariant, productImages, productVideos)
+  );
   const [title, setTitle] = useState('Product Spotlight');
   const [textColor, setTextColor] = useState('#ffffff');
   const [highlightColor, setHighlightColor] = useState('#facc15');
@@ -104,7 +139,7 @@ export function StudioEditor({
   const [audioUrl, setAudioUrl] = useState('');
   const [audioDuration, setAudioDuration] = useState<number | undefined>(undefined);
   const [useFreeTTS, setUseFreeTTS] = useState(true);
-  const [voiceId, setVoiceId] = useState(initialScript.elevenlabs_voice_id || 'JBFqnCBsd6RMkjVDRZzb');
+  const [voiceId, setVoiceId] = useState(selectedVariant.elevenlabs_voice_id || 'JBFqnCBsd6RMkjVDRZzb');
 
   // Export state
   const [exportUrl, setExportUrl] = useState('');
@@ -123,12 +158,29 @@ export function StudioEditor({
   const isBuilding = buildPhase === 'generating-voice' || buildPhase === 'rendering';
   const hasCompletedBuild = buildPhase === 'completed' && !!exportUrl;
   const hasVoiceTrack = !!audioUrl;
+  const activeVariant = variantOptions[activeVariantIndex] || selectedVariant;
+  const sourceLabel = sourceType || 'website';
+  const confidenceLabel =
+    typeof confidence === 'number' ? `${Math.round(confidence * 100)}%` : 'n/a';
 
   const invalidateGeneratedOutput = () => {
     setAudioUrl('');
     setAudioDuration(undefined);
     setExportUrl('');
     setBuildPhase('idle');
+  };
+
+  const loadVariant = (index: number) => {
+    const nextVariant = variantOptions[index] || variantOptions[0] || selectedVariant;
+    setActiveVariantIndex(index);
+    setScenes(buildScenesFromVariant(nextVariant, productImages, productVideos));
+    setVoiceId(nextVariant.elevenlabs_voice_id || 'JBFqnCBsd6RMkjVDRZzb');
+    setAudioUrl('');
+    setAudioDuration(undefined);
+    setExportUrl('');
+    setBuildPhase('idle');
+    setActiveSceneIndex(0);
+    toast.success(`Loaded ${nextVariant.creative_angle}`, { icon: '🧩' });
   };
 
   const waitForAudioDuration = (audioSrc: string, timeoutMs = 10000): Promise<number> => {
@@ -425,6 +477,47 @@ export function StudioEditor({
           </div>
         </div>
 
+        <div className="glass-card p-5 space-y-3">
+          <div className="flex items-center justify-between gap-3">
+            <h4 className="font-bold text-white flex items-center gap-2 text-sm">
+              <Sparkles className="w-4 h-4 text-[var(--secondary)]" />
+              Selected Script Variant
+            </h4>
+            <span className="text-[10px] uppercase tracking-wider text-[var(--muted)]">
+              {variantOptions.length} variants
+            </span>
+          </div>
+          <div className="flex flex-wrap gap-2 text-[10px]">
+            <span className="px-2 py-1 rounded-full bg-white/5 border border-[var(--border)] text-[var(--text-secondary)]">
+              Angle: {activeVariant.creative_angle}
+            </span>
+            <span className="px-2 py-1 rounded-full bg-white/5 border border-[var(--border)] text-[var(--text-secondary)]">
+              Score: {activeVariant.score}/100
+            </span>
+            <span className="px-2 py-1 rounded-full bg-white/5 border border-[var(--border)] text-[var(--text-secondary)]">
+              Source: {sourceLabel}
+            </span>
+            <span className="px-2 py-1 rounded-full bg-white/5 border border-[var(--border)] text-[var(--text-secondary)]">
+              Confidence: {confidenceLabel}
+            </span>
+          </div>
+          <p className="text-xs text-[var(--muted)] leading-relaxed">
+            {activeVariant.rationale}
+          </p>
+          {activeVariant.coverageNotes?.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {activeVariant.coverageNotes.map((note) => (
+                <span
+                  key={note}
+                  className="px-2.5 py-1 rounded-full bg-[var(--primary)]/10 border border-[var(--primary)]/20 text-[11px] text-[var(--primary)]"
+                >
+                  {note}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+
         {/* Voiceover and Render Control Card */}
         <div className="glass-card p-6 space-y-4">
           <h4 className="font-bold text-white flex items-center gap-2 text-sm">
@@ -529,6 +622,54 @@ export function StudioEditor({
             </div>
           )}
         </div>
+
+        <details className="glass-card p-6 space-y-4">
+          <summary className="cursor-pointer list-none flex items-center justify-between gap-3 text-white font-bold text-sm">
+            <span>Advanced: Script Variants</span>
+            <span className="text-[10px] uppercase tracking-wider text-[var(--muted)]">
+              Review / switch
+            </span>
+          </summary>
+          <div className="pt-4 space-y-3">
+            {variantOptions.map((variant, index) => {
+              const isActive = index === activeVariantIndex;
+              return (
+                <button
+                  key={variant.variant_id}
+                  type="button"
+                  onClick={() => loadVariant(index)}
+                  className={`w-full text-left p-4 rounded-2xl border transition-all ${
+                    isActive
+                      ? 'bg-[var(--primary)]/10 border-[var(--primary)] shadow-lg shadow-[var(--primary)]/10'
+                      : 'bg-white/5 border-[var(--border)] hover:border-zinc-500'
+                  }`}
+                >
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      <p className="text-sm font-semibold text-white">{variant.creative_angle}</p>
+                      <p className="text-[11px] text-[var(--muted)] mt-1">
+                        {variant.rationale}
+                      </p>
+                    </div>
+                    <span className="text-[10px] px-2 py-1 rounded-full bg-black/40 border border-white/10 text-[var(--text-secondary)]">
+                      {variant.score}/100
+                    </span>
+                  </div>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {variant.coverageNotes.slice(0, 3).map((note) => (
+                      <span
+                        key={note}
+                        className="text-[10px] px-2 py-1 rounded-full bg-black/30 border border-white/10 text-[var(--muted)]"
+                      >
+                        {note}
+                      </span>
+                    ))}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </details>
       </div>
 
       {/* RIGHT: Detailed Customization Options */}

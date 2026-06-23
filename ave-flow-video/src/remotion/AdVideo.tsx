@@ -114,7 +114,13 @@ const SceneMedia: React.FC<{
     };
   }, [scene, frame, durationFrames]);
 
-  if (scene.media_type === 'video') {
+  const isLikelyVideoUrl = (url: string) => {
+    if (!url) return false;
+    if (/^data:video\//i.test(url)) return true;
+    return /\.(mp4|webm|mov|m4v|ogg)(\?|#|$)/i.test(url);
+  };
+
+  if (scene.media_type === 'video' && isLikelyVideoUrl(scene.media_url)) {
     const startFromFrame = Math.round((scene.video_start_offset || 0) * fps);
     return (
       <Video
@@ -127,7 +133,32 @@ const SceneMedia: React.FC<{
         startFrom={startFromFrame}
         muted
         loop
+        onError={(err) => {
+          console.warn('[Remotion] Video playback error, falling back to static frame.', err);
+        }}
       />
+    );
+  }
+
+  if (scene.media_type === 'video') {
+    return (
+      <div
+        style={{
+          width: '100%',
+          height: '100%',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          background: 'linear-gradient(180deg, #111827 0%, #000 100%)',
+          color: '#fff',
+          fontSize: 28,
+          fontWeight: 700,
+          textAlign: 'center',
+          padding: '48px',
+        }}
+      >
+        Video unavailable
+      </div>
     );
   }
 
@@ -671,4 +702,3 @@ export const AdVideo: React.FC<AdVideoProps> = ({
     </AbsoluteFill>
   );
 };
-

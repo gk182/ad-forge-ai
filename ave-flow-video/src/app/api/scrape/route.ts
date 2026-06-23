@@ -72,6 +72,8 @@ export async function POST(req: NextRequest) {
       videos: Array.isArray(data.videos) 
         ? data.videos.filter((v: string) => !v.toLowerCase().endsWith('.m3u8') && !v.toLowerCase().endsWith('.ts') && !v.toLowerCase().endsWith('.mpd'))
         : [],
+      sourceType: data.sourceType || 'website',
+      confidence: typeof data.confidence === 'number' ? data.confidence : 0.7,
     });
   } catch (error) {
     console.error('Scrape error:', error);
