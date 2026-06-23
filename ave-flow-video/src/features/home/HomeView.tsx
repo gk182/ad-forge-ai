@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { Settings, Film, Sparkles, ArrowLeft } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { URLInput } from './components/URLInput';
@@ -9,18 +9,10 @@ import { StudioEditor } from './components/StudioEditor';
 import { SettingsModal } from '@/features/settings/SettingsModal';
 import { getApiKeys } from '@/features/settings/settings.storage';
 import type { ScriptTone } from '@/features/settings/URLInput.types';
+import type { ProductData, ScriptBundle } from '@/features/pipeline/pipeline.types';
 import { SITE_NAME, SITE_TAGLINE } from '@/config/site';
 
 type WorkflowStep = 'input' | 'scraping' | 'assets' | 'scripting' | 'studio';
-
-interface ProductData {
-  title: string;
-  description: string;
-  image: string;
-  markdown: string;
-  screenshots: string[];
-  videos: string[];
-}
 
 export function HomeView() {
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -32,7 +24,7 @@ export function HomeView() {
 
   // Loaded data states
   const [productData, setProductData] = useState<ProductData | null>(null);
-  const [scriptData, setScriptData] = useState<any | null>(null);
+  const [scriptData, setScriptData] = useState<ScriptBundle | null>(null);
   const [serverConfig, setServerConfig] = useState<{ hasGeminiApiKey: boolean } | null>(null);
 
   useEffect(() => {
@@ -122,7 +114,10 @@ export function HomeView() {
 
       setScriptData(data);
       setWorkflowStep('studio');
-      toast.success('AI Script & Storyboard generated! Welcome to Remotion Studio.', { icon: '✨' });
+      toast.success(
+        `Generated ${data.variants?.length || 1} script variants. Best variant loaded into studio.`,
+        { icon: '✨' }
+      );
     } catch (error) {
       const message = error instanceof Error ? error.message : 'AI analysis failed';
       toast.error(message, { duration: 6000 });
@@ -243,9 +238,14 @@ export function HomeView() {
         {/* State 5: Remotion Studio Editor */}
         {workflowStep === 'studio' && scriptData && productData && (
           <StudioEditor
-            initialScript={scriptData}
+            key={`${scriptData.selectedVariant.variant_id}-${scriptData.selectedVariantIndex}`}
+            selectedVariant={scriptData.selectedVariant}
+            variants={scriptData.variants}
             productImages={[productData.image, ...(productData.screenshots || [])].filter(Boolean)}
             productVideos={productData.videos || []}
+            sourceType={productData.sourceType}
+            confidence={productData.confidence}
+            autoBuild
           />
         )}
 

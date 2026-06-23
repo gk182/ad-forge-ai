@@ -1,9 +1,10 @@
 'use client';
 
-import { useState, useRef, useMemo } from 'react';
+import { useState, useRef, useMemo, useEffect } from 'react';
 import { Player, PlayerRef } from '@remotion/player';
 import { AdVideo } from '@/remotion/AdVideo';
 import type { Scene } from '@/remotion/AdVideo';
+import type { ScriptVariant } from '@/features/pipeline/pipeline.types';
 import {
   Play,
   Pause,
@@ -24,13 +25,13 @@ import toast from 'react-hot-toast';
 import { getApiKeys } from '@/features/settings/settings.storage';
 
 interface StudioEditorProps {
-  initialScript: {
-    script_text: string;
-    elevenlabs_voice_id: string;
-    scenes: Scene[];
-  };
+  selectedVariant: ScriptVariant;
+  variants: ScriptVariant[];
   productImages: string[];
   productVideos: string[];
+  sourceType?: 'amazon' | 'app_store' | 'website' | 'unknown';
+  confidence?: number;
+  autoBuild?: boolean;
 }
 
 const GOOGLE_FONTS = [
@@ -65,24 +66,68 @@ const TRANSITION_TYPES = [
   { value: 'none', label: 'Cut (None)' },
 ];
 
-export function StudioEditor({ initialScript, productImages, productVideos }: StudioEditorProps) {
+type BuildPhase = 'idle' | 'generating-voice' | 'voice-ready' | 'rendering' | 'completed' | 'error';
+
+function isLikelyVideoUrl(url: string) {
+  if (!url) return false;
+  if (/^data:video\//i.test(url)) return true;
+  return /\.(mp4|webm|mov|m4v|ogg)(\?|#|$)/i.test(url);
+}
+
+function buildScenesFromVariant(
+  variant: ScriptVariant,
+  productImages: string[],
+  productVideos: string[]
+): Scene[] {
+  const fallbackImage =
+    productImages[0] ||
+    'https://images.unsplash.com/photo-1523275335684-37898b6baf30?auto=format&fit=crop&w=600&q=80';
+  const fallbackVideo = productVideos.find(isLikelyVideoUrl) || '';
+
+  return variant.scenes.map((scene) => {
+    const requestedVideo = scene.media_type === 'video';
+    const sceneLooksVideo = isLikelyVideoUrl(scene.media_url);
+    const resolvedVideoUrl = sceneLooksVideo ? scene.media_url : fallbackVideo;
+    const mediaType: 'image' | 'video' = requestedVideo && isLikelyVideoUrl(resolvedVideoUrl) ? 'video' : 'image';
+    const mediaUrl =
+      mediaType === 'video'
+        ? resolvedVideoUrl
+        : requestedVideo
+          ? fallbackImage
+          : scene.media_url || fallbackImage;
+
+    return {
+      ...scene,
+      media_type: mediaType,
+      media_url: mediaUrl,
+      duration: scene.duration || 3.5,
+      subtitle: scene.subtitle || 'Add subtitle here...',
+      motion: mediaType === 'video' ? 'static' : scene.motion || 'center_zoom',
+      transition_type: scene.transition_type || 'fade',
+      video_start_offset: mediaType === 'video' ? scene.video_start_offset || 0 : scene.video_start_offset,
+    };
+  });
+}
+
+export function StudioEditor({
+  selectedVariant,
+  variants,
+  productImages,
+  productVideos,
+  sourceType,
+  confidence,
+  autoBuild = false,
+}: StudioEditorProps) {
   const playerRef = useRef<PlayerRef>(null);
+  const autoBuildStartedRef = useRef(false);
+  const buildLockRef = useRef(false);
+  const variantOptions = variants.length > 0 ? variants : [selectedVariant];
 
   // States
-  const [scenes, setScenes] = useState<Scene[]>(() => {
-    const hasVideos = productVideos && productVideos.length > 0;
-    return initialScript.scenes.map((s, idx) => {
-      // Prioritize crawled videos sequentially if available
-      const shouldAssignVideo = hasVideos && idx < productVideos.length;
-      return {
-        ...s,
-        media_type: shouldAssignVideo ? 'video' : (s.media_type || 'image'),
-        media_url: shouldAssignVideo ? productVideos[idx] : (s.media_url || ''),
-        video_start_offset: s.video_start_offset || 0,
-        transition_type: s.transition_type || 'fade',
-      };
-    });
-  });
+  const [activeVariantIndex, setActiveVariantIndex] = useState(0);
+  const [scenes, setScenes] = useState<Scene[]>(() =>
+    buildScenesFromVariant(selectedVariant, productImages, productVideos)
+  );
   const [title, setTitle] = useState('Product Spotlight');
   const [textColor, setTextColor] = useState('#ffffff');
   const [highlightColor, setHighlightColor] = useState('#facc15');
@@ -93,13 +138,12 @@ export function StudioEditor({ initialScript, productImages, productVideos }: St
   // Audio / voiceover state
   const [audioUrl, setAudioUrl] = useState('');
   const [audioDuration, setAudioDuration] = useState<number | undefined>(undefined);
-  const [isGeneratingVoice, setIsGeneratingVoice] = useState(false);
   const [useFreeTTS, setUseFreeTTS] = useState(true);
-  const [voiceId, setVoiceId] = useState(initialScript.elevenlabs_voice_id || 'JBFqnCBsd6RMkjVDRZzb');
+  const [voiceId, setVoiceId] = useState(selectedVariant.elevenlabs_voice_id || 'JBFqnCBsd6RMkjVDRZzb');
 
   // Export state
-  const [isRendering, setIsRendering] = useState(false);
   const [exportUrl, setExportUrl] = useState('');
+  const [buildPhase, setBuildPhase] = useState<BuildPhase>('idle');
 
   // active scene being edited
   const [activeSceneIndex, setActiveSceneIndex] = useState(0);
@@ -111,18 +155,79 @@ export function StudioEditor({ initialScript, productImages, productVideos }: St
 
   const activeDuration = audioDuration || totalPlannedDuration;
   const durationInFrames = Math.max(90, Math.round(activeDuration * 30));
+  const isBuilding = buildPhase === 'generating-voice' || buildPhase === 'rendering';
+  const hasCompletedBuild = buildPhase === 'completed' && !!exportUrl;
+  const hasVoiceTrack = !!audioUrl;
+  const activeVariant = variantOptions[activeVariantIndex] || selectedVariant;
+  const sourceLabel = sourceType || 'website';
+  const confidenceLabel =
+    typeof confidence === 'number' ? `${Math.round(confidence * 100)}%` : 'n/a';
+
+  const invalidateGeneratedOutput = () => {
+    setAudioUrl('');
+    setAudioDuration(undefined);
+    setExportUrl('');
+    setBuildPhase('idle');
+  };
+
+  const loadVariant = (index: number) => {
+    const nextVariant = variantOptions[index] || variantOptions[0] || selectedVariant;
+    setActiveVariantIndex(index);
+    setScenes(buildScenesFromVariant(nextVariant, productImages, productVideos));
+    setVoiceId(nextVariant.elevenlabs_voice_id || 'JBFqnCBsd6RMkjVDRZzb');
+    setAudioUrl('');
+    setAudioDuration(undefined);
+    setExportUrl('');
+    setBuildPhase('idle');
+    setActiveSceneIndex(0);
+    toast.success(`Loaded ${nextVariant.creative_angle}`, { icon: '🧩' });
+  };
+
+  const waitForAudioDuration = (audioSrc: string, timeoutMs = 10000): Promise<number> => {
+    return new Promise((resolve) => {
+      const fallbackDuration = totalPlannedDuration || 1;
+      const audio = new Audio();
+      let settled = false;
+
+      const finish = (duration: number) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeoutId);
+        audio.removeAttribute('src');
+        audio.load();
+        resolve(Number.isFinite(duration) && duration > 0 ? duration : fallbackDuration);
+      };
+
+      const timeoutId = window.setTimeout(() => {
+        finish(fallbackDuration);
+      }, timeoutMs);
+
+      audio.preload = 'metadata';
+      audio.addEventListener(
+        'loadedmetadata',
+        () => {
+          finish(audio.duration);
+        },
+        { once: true }
+      );
+      audio.addEventListener(
+        'error',
+        () => {
+          finish(fallbackDuration);
+        },
+        { once: true }
+      );
+      audio.src = audioSrc;
+    });
+  };
 
   // Update a scene property
   const updateScene = (index: number, fields: Partial<Scene>) => {
     setScenes((prev) =>
       prev.map((scene, i) => (i === index ? { ...scene, ...fields } : scene))
     );
-    // Invalidate audio/voice output on duration/subtitle changes
-    if (fields.subtitle !== undefined || fields.duration !== undefined) {
-      setAudioUrl('');
-      setAudioDuration(undefined);
-      setExportUrl('');
-    }
+    // Any scene-level edit invalidates the generated audio/video pair.
+    invalidateGeneratedOutput();
   };
 
   const addScene = () => {
@@ -138,10 +243,8 @@ export function StudioEditor({ initialScript, productImages, productVideos }: St
     };
     setScenes((prev) => [...prev, newScene]);
     setActiveSceneIndex(scenes.length);
-    // Invalidate audio since structure changed
-    setAudioUrl('');
-    setAudioDuration(undefined);
-    setExportUrl('');
+    // Invalidate generated output since structure changed
+    invalidateGeneratedOutput();
     toast.success('Scene added');
   };
 
@@ -152,10 +255,8 @@ export function StudioEditor({ initialScript, productImages, productVideos }: St
     }
     setScenes((prev) => prev.filter((_, i) => i !== index));
     setActiveSceneIndex(Math.max(0, index - 1));
-    // Invalidate audio since structure changed
-    setAudioUrl('');
-    setAudioDuration(undefined);
-    setExportUrl('');
+    // Invalidate generated output since structure changed
+    invalidateGeneratedOutput();
     toast.success('Scene removed');
   };
 
@@ -194,98 +295,132 @@ export function StudioEditor({ initialScript, productImages, productVideos }: St
 
     setScenes(updated);
     
-    // Invalidate audio
-    setAudioUrl('');
-    setAudioDuration(undefined);
-    setExportUrl('');
+    // Invalidate generated output
+    invalidateGeneratedOutput();
 
     toast.success('Scene durations synchronized with subtitle word lengths!');
   };
 
-  // Generate voice audio
-  const handleGenerateVoice = async () => {
-    setIsGeneratingVoice(true);
+  const generateVoiceTrack = async () => {
+    setBuildPhase('generating-voice');
     setAudioUrl('');
     setAudioDuration(undefined);
     setExportUrl('');
+    toast.loading('Generating voice track...', { id: 'build-toast' });
 
     const fullScript = scenes.map((s) => s.subtitle).join(' ');
     const apiKeys = getApiKeys();
 
-    try {
-      const res = await fetch('/api/voice', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          script: fullScript,
-          elevenLabsApiKey: apiKeys.elevenLabsApiKey || '',
-          elevenLabsVoiceId: voiceId,
-          useFreeTTS,
-        }),
-      });
+    const res = await fetch('/api/voice', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        script: fullScript,
+        elevenLabsApiKey: apiKeys.elevenLabsApiKey || '',
+        elevenLabsVoiceId: voiceId,
+        useFreeTTS,
+      }),
+    });
 
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to generate voice');
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Failed to generate voice');
 
-      setAudioUrl(data.audioBase64);
+    const audioBase64 = data.audioBase64 as string;
+    setAudioUrl(audioBase64);
 
-      // Estimate duration based on audio file length if possible
-      // Google TTS/ElevenLabs can return duration estimate. Let's create an Audio element locally to measure exactly:
-      const audio = new Audio(data.audioBase64);
-      audio.addEventListener('loadedmetadata', () => {
-        setAudioDuration(audio.duration);
-        toast.success(`Voice track generated successfully! Duration: ${audio.duration.toFixed(1)}s`, { icon: '🎙️' });
-        setIsGeneratingVoice(false);
-      });
-      // Fallback if metadata fails to load in 4s
-      setTimeout(() => {
-        if (isGeneratingVoice) {
-          setAudioDuration(totalPlannedDuration);
-          setIsGeneratingVoice(false);
-        }
-      }, 4000);
-    } catch (e: any) {
-      toast.error(e.message || 'Voice track generation failed');
-      setIsGeneratingVoice(false);
-    }
+    const duration = await waitForAudioDuration(audioBase64);
+    setAudioDuration(duration);
+    setBuildPhase('voice-ready');
+    toast.success('Voice track generated successfully.', { id: 'build-toast', icon: '🎙️' });
+
+    return { audioBase64, duration };
   };
 
-  // Render video
-  const handleRenderVideo = async () => {
-    setIsRendering(true);
+  const renderVideo = async (audioBase64: string, duration: number) => {
+    setBuildPhase('rendering');
     setExportUrl('');
-    toast.loading('Starting render server...', { id: 'render-toast' });
+    toast.loading('Rendering full video...', { id: 'build-toast' });
+
+    const payload = {
+      title,
+      scenes,
+      audioUrl: audioBase64,
+      audioDuration: duration,
+      textColor,
+      highlightColor,
+      fontFamily,
+      layoutType,
+      subtitleStyle,
+    };
+
+    const res = await fetch('/api/render-remotion', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Render failed');
+
+    setExportUrl(data.videoUrl);
+    setBuildPhase('completed');
+    toast.success('Full video built successfully.', { id: 'build-toast', icon: '🎉' });
+    return data.videoUrl as string;
+  };
+
+  const renderCurrentVideo = async () => {
+    if (buildLockRef.current) return;
+    if (!audioUrl || !audioDuration) {
+      toast.error('Please generate voice first before rendering MP4.');
+      return;
+    }
+
+    buildLockRef.current = true;
 
     try {
-      const payload = {
-        title,
-        scenes,
-        audioUrl,
-        audioDuration,
-        textColor,
-        highlightColor,
-        fontFamily,
-        layoutType,
-        subtitleStyle,
-      };
-
-      const res = await fetch('/api/render-remotion', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Render failed');
-
-      setExportUrl(data.videoUrl);
-      toast.success('Video rendered successfully! Click Download.', { id: 'render-toast', icon: '🎉' });
+      await renderVideo(audioUrl, audioDuration);
     } catch (e: any) {
-      toast.error(e.message || 'Rendering failed', { id: 'render-toast' });
+      const message = e instanceof Error ? e.message : 'Render failed';
+      setBuildPhase('error');
+      toast.error(message, { id: 'build-toast', duration: 6000 });
     } finally {
-      setIsRendering(false);
+      buildLockRef.current = false;
     }
   };
+
+  const generateVoiceOnly = async () => {
+    if (buildLockRef.current) return;
+    buildLockRef.current = true;
+
+    try {
+      if (!useFreeTTS && !getApiKeys().elevenLabsApiKey) {
+        throw new Error('ElevenLabs API key is required or enable Free TTS.');
+      }
+
+      await generateVoiceTrack();
+    } catch (e: any) {
+      const message = e instanceof Error ? e.message : 'Voice generation failed';
+      setBuildPhase('error');
+      toast.error(message, { id: 'build-toast', duration: 6000 });
+    } finally {
+      buildLockRef.current = false;
+    }
+  };
+
+  const markRenderDirty = () => {
+    setExportUrl('');
+    if (buildPhase === 'completed') {
+      setBuildPhase('idle');
+    }
+  };
+
+  useEffect(() => {
+    if (!autoBuild || autoBuildStartedRef.current) return;
+    autoBuildStartedRef.current = true;
+    void generateVoiceOnly();
+    // Auto-run only once on the first studio mount for the generated script.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoBuild]);
 
   // Sync player seek to scene start frame
   const seekToScene = (index: number) => {
@@ -342,11 +477,52 @@ export function StudioEditor({ initialScript, productImages, productVideos }: St
           </div>
         </div>
 
+        <div className="glass-card p-5 space-y-3">
+          <div className="flex items-center justify-between gap-3">
+            <h4 className="font-bold text-white flex items-center gap-2 text-sm">
+              <Sparkles className="w-4 h-4 text-[var(--secondary)]" />
+              Selected Script Variant
+            </h4>
+            <span className="text-[10px] uppercase tracking-wider text-[var(--muted)]">
+              {variantOptions.length} variants
+            </span>
+          </div>
+          <div className="flex flex-wrap gap-2 text-[10px]">
+            <span className="px-2 py-1 rounded-full bg-white/5 border border-[var(--border)] text-[var(--text-secondary)]">
+              Angle: {activeVariant.creative_angle}
+            </span>
+            <span className="px-2 py-1 rounded-full bg-white/5 border border-[var(--border)] text-[var(--text-secondary)]">
+              Score: {activeVariant.score}/100
+            </span>
+            <span className="px-2 py-1 rounded-full bg-white/5 border border-[var(--border)] text-[var(--text-secondary)]">
+              Source: {sourceLabel}
+            </span>
+            <span className="px-2 py-1 rounded-full bg-white/5 border border-[var(--border)] text-[var(--text-secondary)]">
+              Confidence: {confidenceLabel}
+            </span>
+          </div>
+          <p className="text-xs text-[var(--muted)] leading-relaxed">
+            {activeVariant.rationale}
+          </p>
+          {activeVariant.coverageNotes?.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {activeVariant.coverageNotes.map((note) => (
+                <span
+                  key={note}
+                  className="px-2.5 py-1 rounded-full bg-[var(--primary)]/10 border border-[var(--primary)]/20 text-[11px] text-[var(--primary)]"
+                >
+                  {note}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+
         {/* Voiceover and Render Control Card */}
         <div className="glass-card p-6 space-y-4">
           <h4 className="font-bold text-white flex items-center gap-2 text-sm">
             <Mic className="w-4 h-4 text-[var(--primary)]" />
-            Voice & Render Pipeline
+            Voice Pipeline
           </h4>
           
           {/* Audio generation */}
@@ -357,7 +533,10 @@ export function StudioEditor({ initialScript, productImages, productVideos }: St
                 <input
                   type="checkbox"
                   checked={useFreeTTS}
-                  onChange={(e) => setUseFreeTTS(e.target.checked)}
+                  onChange={(e) => {
+                    setUseFreeTTS(e.target.checked);
+                    invalidateGeneratedOutput();
+                  }}
                   className="rounded border-zinc-700 bg-zinc-900 text-[var(--primary)] focus:ring-[var(--primary)]"
                 />
                 Use Free TTS
@@ -370,7 +549,10 @@ export function StudioEditor({ initialScript, productImages, productVideos }: St
                 <input
                   type="text"
                   value={voiceId}
-                  onChange={(e) => setVoiceId(e.target.value)}
+                  onChange={(e) => {
+                    setVoiceId(e.target.value);
+                    invalidateGeneratedOutput();
+                  }}
                   className="w-full px-3 py-1.5 bg-black/40 border border-[var(--border)]/50 rounded-lg text-xs text-white"
                   placeholder="Voice ID (George, Bella...)"
                 />
@@ -378,45 +560,57 @@ export function StudioEditor({ initialScript, productImages, productVideos }: St
             )}
 
             <button
-              onClick={handleGenerateVoice}
-              disabled={isGeneratingVoice}
+              onClick={() => void generateVoiceOnly()}
+              disabled={isBuilding}
               className="w-full flex items-center justify-center gap-2 py-2 rounded-lg bg-[var(--primary)]/10 border border-[var(--primary)]/30 hover:bg-[var(--primary)]/20 text-xs font-semibold text-[var(--primary)] transition-all disabled:opacity-50"
             >
-              {isGeneratingVoice ? (
+              {buildPhase === 'generating-voice' ? (
                 <>
                   <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                  Generating Audio Track...
+                  Generating voice...
                 </>
               ) : (
                 <>
-                  <Mic className="w-3.5 h-3.5" />
-                  {audioUrl ? 'Re-generate Voice Audio' : 'Generate Voice Audio'}
+                  <Sparkles className="w-3.5 h-3.5" />
+                  {hasVoiceTrack ? 'Re-generate Voice Audio' : 'Generate Voice Audio'}
                 </>
               )}
             </button>
+
+            <button
+              onClick={() => void renderCurrentVideo()}
+              disabled={isBuilding || !audioUrl || !audioDuration}
+              className="w-full flex items-center justify-center gap-2 py-2 rounded-lg bg-gradient-to-r from-[var(--primary)] to-[var(--secondary)] hover:brightness-110 text-xs font-semibold text-white transition-all disabled:opacity-50"
+            >
+              {buildPhase === 'rendering' ? (
+                <>
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                  Rendering MP4...
+                </>
+              ) : (
+                <>
+                  <Download className="w-3.5 h-3.5" />
+                  {hasCompletedBuild ? 'Re-render MP4' : 'Render MP4'}
+                </>
+              )}
+            </button>
+
+            <p className="text-[10px] text-[var(--muted)] leading-relaxed">
+              {buildPhase === 'generating-voice'
+                ? 'Voice track is being synthesized automatically.'
+                : buildPhase === 'voice-ready'
+                  ? 'Voice track is ready. You can render MP4 when needed.'
+                : buildPhase === 'rendering'
+                  ? 'Video is rendering with image, captions, and audio.'
+                  : hasCompletedBuild
+                    ? 'You can rebuild after editing scenes or style settings.'
+                    : 'Generate the voice first, then render MP4 manually if needed.'}
+            </p>
           </div>
 
           {/* Export Render */}
-          <div className="space-y-3 pt-2">
-            <button
-              onClick={handleRenderVideo}
-              disabled={isRendering || isGeneratingVoice}
-              className="w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-gradient-to-r from-[var(--primary)] to-[var(--secondary)] hover:brightness-110 active:scale-95 transition-all text-white font-semibold text-sm shadow-lg shadow-[var(--primary)]/20 disabled:opacity-50"
-            >
-              {isRendering ? (
-                <>
-                  <RefreshCw className="w-4 h-4 animate-spin" />
-                  Rendering MP4 Video...
-                </>
-              ) : (
-                <>
-                  <Sparkles className="w-4 h-4" />
-                  Export High-Quality MP4
-                </>
-              )}
-            </button>
-
-            {exportUrl && (
+          {exportUrl && (
+            <div className="space-y-3 pt-2">
               <a
                 href={exportUrl}
                 download
@@ -425,9 +619,57 @@ export function StudioEditor({ initialScript, productImages, productVideos }: St
                 <Download className="w-4 h-4" />
                 Download Completed Video
               </a>
-            )}
-          </div>
+            </div>
+          )}
         </div>
+
+        <details className="glass-card p-6 space-y-4">
+          <summary className="cursor-pointer list-none flex items-center justify-between gap-3 text-white font-bold text-sm">
+            <span>Advanced: Script Variants</span>
+            <span className="text-[10px] uppercase tracking-wider text-[var(--muted)]">
+              Review / switch
+            </span>
+          </summary>
+          <div className="pt-4 space-y-3">
+            {variantOptions.map((variant, index) => {
+              const isActive = index === activeVariantIndex;
+              return (
+                <button
+                  key={variant.variant_id}
+                  type="button"
+                  onClick={() => loadVariant(index)}
+                  className={`w-full text-left p-4 rounded-2xl border transition-all ${
+                    isActive
+                      ? 'bg-[var(--primary)]/10 border-[var(--primary)] shadow-lg shadow-[var(--primary)]/10'
+                      : 'bg-white/5 border-[var(--border)] hover:border-zinc-500'
+                  }`}
+                >
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      <p className="text-sm font-semibold text-white">{variant.creative_angle}</p>
+                      <p className="text-[11px] text-[var(--muted)] mt-1">
+                        {variant.rationale}
+                      </p>
+                    </div>
+                    <span className="text-[10px] px-2 py-1 rounded-full bg-black/40 border border-white/10 text-[var(--text-secondary)]">
+                      {variant.score}/100
+                    </span>
+                  </div>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {variant.coverageNotes.slice(0, 3).map((note) => (
+                      <span
+                        key={note}
+                        className="text-[10px] px-2 py-1 rounded-full bg-black/30 border border-white/10 text-[var(--muted)]"
+                      >
+                        {note}
+                      </span>
+                    ))}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </details>
       </div>
 
       {/* RIGHT: Detailed Customization Options */}
@@ -446,7 +688,10 @@ export function StudioEditor({ initialScript, productImages, productVideos }: St
               <input
                 type="text"
                 value={title}
-                onChange={(e) => setTitle(e.target.value)}
+                onChange={(e) => {
+                  setTitle(e.target.value);
+                  markRenderDirty();
+                }}
                 className="w-full px-3.5 py-2 bg-white/5 border border-[var(--border)] rounded-xl text-sm text-white focus:outline-none focus:border-[var(--primary)]"
                 placeholder="PROD REVIEW"
               />
@@ -457,7 +702,10 @@ export function StudioEditor({ initialScript, productImages, productVideos }: St
               <div className="relative">
                 <select
                   value={fontFamily}
-                  onChange={(e) => setFontFamily(e.target.value)}
+                  onChange={(e) => {
+                    setFontFamily(e.target.value);
+                    markRenderDirty();
+                  }}
                   className="w-full px-3.5 py-2 bg-zinc-900 border border-[var(--border)] rounded-xl text-sm text-white focus:outline-none appearance-none cursor-pointer"
                 >
                   {GOOGLE_FONTS.map((font) => (
@@ -476,13 +724,19 @@ export function StudioEditor({ initialScript, productImages, productVideos }: St
                 <input
                   type="color"
                   value={textColor}
-                  onChange={(e) => setTextColor(e.target.value)}
+                  onChange={(e) => {
+                    setTextColor(e.target.value);
+                    markRenderDirty();
+                  }}
                   className="w-9 h-9 p-0.5 rounded border border-[var(--border)] bg-transparent cursor-pointer"
                 />
                 <input
                   type="text"
                   value={textColor}
-                  onChange={(e) => setTextColor(e.target.value)}
+                  onChange={(e) => {
+                    setTextColor(e.target.value);
+                    markRenderDirty();
+                  }}
                   className="flex-1 px-3 py-1.5 bg-white/5 border border-[var(--border)] rounded-lg text-xs text-white uppercase"
                 />
               </div>
@@ -494,13 +748,19 @@ export function StudioEditor({ initialScript, productImages, productVideos }: St
                 <input
                   type="color"
                   value={highlightColor}
-                  onChange={(e) => setHighlightColor(e.target.value)}
+                  onChange={(e) => {
+                    setHighlightColor(e.target.value);
+                    markRenderDirty();
+                  }}
                   className="w-9 h-9 p-0.5 rounded border border-[var(--border)] bg-transparent cursor-pointer"
                 />
                 <input
                   type="text"
                   value={highlightColor}
-                  onChange={(e) => setHighlightColor(e.target.value)}
+                  onChange={(e) => {
+                    setHighlightColor(e.target.value);
+                    markRenderDirty();
+                  }}
                   className="flex-1 px-3 py-1.5 bg-white/5 border border-[var(--border)] rounded-lg text-xs text-white uppercase"
                 />
               </div>
@@ -511,7 +771,10 @@ export function StudioEditor({ initialScript, productImages, productVideos }: St
               <div className="relative">
                 <select
                   value={subtitleStyle}
-                  onChange={(e) => setSubtitleStyle(e.target.value as any)}
+                  onChange={(e) => {
+                    setSubtitleStyle(e.target.value as any);
+                    markRenderDirty();
+                  }}
                   className="w-full px-3.5 py-2 bg-zinc-900 border border-[var(--border)] rounded-xl text-sm text-white focus:outline-none appearance-none cursor-pointer"
                 >
                   <option value="bounce">Word Bounce (Phồng to)</option>
@@ -534,7 +797,10 @@ export function StudioEditor({ initialScript, productImages, productVideos }: St
                 ].map((lay) => (
                   <button
                     key={lay.id}
-                    onClick={() => setLayoutType(lay.id as any)}
+                    onClick={() => {
+                      setLayoutType(lay.id as any);
+                      markRenderDirty();
+                    }}
                     className={`py-2 px-3 border rounded-xl text-xs font-semibold transition-all ${
                       layoutType === lay.id
                         ? 'bg-[var(--primary)]/10 border-[var(--primary)] text-[var(--primary)]'

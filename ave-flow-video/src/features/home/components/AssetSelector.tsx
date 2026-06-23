@@ -11,6 +11,8 @@ interface AssetSelectorProps {
     image: string;
     screenshots: string[];
     videos: string[];
+    sourceType?: string;
+    confidence?: number;
   };
   onGenerateScript: (selectedImages: string[], videoCaptures: string[], customNotes: string) => void;
   isLoading: boolean;
@@ -100,6 +102,13 @@ export function AssetSelector({ productData, onGenerateScript, isLoading }: Asse
           <p className="text-sm text-[var(--text-secondary)] mt-1">
             Choose which images and parts of the video Gemini should analyze to write the script.
           </p>
+          {(productData.sourceType || typeof productData.confidence === 'number') && (
+            <p className="text-xs text-[var(--muted)] mt-2">
+              Source: {productData.sourceType || 'website'}
+              {' · '}
+              Confidence: {typeof productData.confidence === 'number' ? `${Math.round(productData.confidence * 100)}%` : 'n/a'}
+            </p>
+          )}
         </div>
 
         {/* 1. Images Selection Grid */}
