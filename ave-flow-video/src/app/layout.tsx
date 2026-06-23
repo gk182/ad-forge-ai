@@ -31,7 +31,11 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}>
+    <html
+      lang="en"
+      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      suppressHydrationWarning
+    >
       <body className="min-h-full flex flex-col relative overflow-x-hidden bg-[var(--background)] text-[var(--foreground)]">
         <div className="bg-blob w-[500px] h-[500px] bg-[var(--primary)] top-[-200px] left-[-100px]" />
         <div className="bg-blob w-[400px] h-[400px] bg-[var(--secondary)] bottom-[-150px] right-[-100px]" />

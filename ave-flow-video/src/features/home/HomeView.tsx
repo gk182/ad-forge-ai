@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { Settings, Film, Sparkles, ArrowLeft } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { URLInput } from './components/URLInput';
@@ -243,9 +243,11 @@ export function HomeView() {
         {/* State 5: Remotion Studio Editor */}
         {workflowStep === 'studio' && scriptData && productData && (
           <StudioEditor
+            key={scriptData.script_text}
             initialScript={scriptData}
             productImages={[productData.image, ...(productData.screenshots || [])].filter(Boolean)}
             productVideos={productData.videos || []}
+            autoBuild
           />
         )}
 
