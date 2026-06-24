@@ -96,7 +96,14 @@ def synthesize_speech_to_base64(request: TtsSynthesisRequest) -> dict[str, str]:
     }
     if alignment_result is not None:
         response["alignment"] = [
-            {"word": word.word, "start": word.start, "end": word.end}
+            {
+                "word": word.word,
+                "start": word.start,
+                "end": word.end,
+                "matched": word.matched,
+                "isEstimated": word.is_estimated,
+                "confidence": word.confidence,
+            }
             for word in alignment_result.words
         ]
         response["sceneAlignments"] = [
@@ -107,7 +114,14 @@ def synthesize_speech_to_base64(request: TtsSynthesisRequest) -> dict[str, str]:
                 "end": scene.end,
                 "duration": scene.duration,
                 "wordTimings": [
-                    {"word": word.word, "start": word.start, "end": word.end}
+                    {
+                        "word": word.word,
+                        "start": word.start,
+                        "end": word.end,
+                        "matched": word.matched,
+                        "isEstimated": word.is_estimated,
+                        "confidence": word.confidence,
+                    }
                     for word in scene.word_timings
                 ],
             }

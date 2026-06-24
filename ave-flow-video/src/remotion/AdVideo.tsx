@@ -14,6 +14,9 @@ export interface WordTiming {
   word: string;
   start: number;
   end: number;
+  matched?: boolean;
+  isEstimated?: boolean;
+  confidence?: number | null;
 }
 
 export interface Scene {
@@ -200,7 +203,7 @@ const SceneMedia: React.FC<{
   );
 };
 
-// Word-level character-weighted highlight karaoke subtitles with custom animations
+// Word-level karaoke subtitles with progressive fill inside each spoken word.
 const KaraokeSubtitles: React.FC<{
   text: string;
   textColor: string;
@@ -220,6 +223,8 @@ const KaraokeSubtitles: React.FC<{
         word: timing.word,
         start: timing.start * fps,
         end: timing.end * fps,
+        matched: timing.matched !== false,
+        isEstimated: Boolean(timing.isEstimated),
       }));
     }
     // Longer words should occupy more duration. Base weight = 2 + char length
@@ -233,7 +238,7 @@ const KaraokeSubtitles: React.FC<{
       const start = accumulatedFrames;
       const end = accumulatedFrames + wordDuration;
       accumulatedFrames = end;
-      return { word, start, end };
+      return { word, start, end, matched: true, isEstimated: false };
     });
   }, [words, durationFrames, alignedWordTimings, fps]);
 
@@ -248,11 +253,18 @@ const KaraokeSubtitles: React.FC<{
         width: '100%',
       }}
     >
-      {wordTimings.map(({ word, start, end }, idx) => {
-        const isActive = frame >= start && frame < end;
+      {wordTimings.map(({ word, start, end, matched, isEstimated }, idx) => {
+        const safeDuration = Math.max(1, end - start);
+        const progress = frame <= start
+          ? 0
+          : frame >= end
+            ? 1
+            : (frame - start) / safeDuration;
+        const isActive = progress > 0 && progress < 1;
         let transform = 'scale(1.0)';
         let opacity = 1.0;
         let textGlow = '';
+        let filter = 'none';
 
         if (isActive) {
           const age = frame - start;
@@ -300,20 +312,23 @@ const KaraokeSubtitles: React.FC<{
           }
         }
 
-        const color = isActive ? highlightColor : textColor;
+        if (isEstimated && !matched) {
+          filter = 'saturate(0.9)';
+        }
 
         return (
           <span
             key={idx}
             style={{
-              display: 'inline-block',
+              display: 'inline-flex',
+              position: 'relative',
               margin: '8px 18px',
               fontSize: '64px',
               fontWeight: 900,
-              color,
               transform,
               transformOrigin: 'center center',
               opacity,
+              filter,
               textShadow: textGlow
                 ? `0 0 20px ${highlightColor}, -4px -4px 0 #000, 4px -4px 0 #000, -4px 4px 0 #000, 4px 4px 0 #000`
                 : `
@@ -326,7 +341,27 @@ const KaraokeSubtitles: React.FC<{
               transition: 'transform 0.08s ease-out, color 0.05s ease-in-out, opacity 0.1s ease',
             }}
           >
-            {word}
+            <span
+              style={{
+                color: textColor,
+                display: 'inline-block',
+              }}
+            >
+              {word}
+            </span>
+            <span
+              style={{
+                position: 'absolute',
+                inset: 0,
+                width: `${Math.max(0, Math.min(1, progress)) * 100}%`,
+                overflow: 'hidden',
+                whiteSpace: 'nowrap',
+                color: highlightColor,
+                pointerEvents: 'none',
+              }}
+            >
+              <span style={{ display: 'inline-block' }}>{word}</span>
+            </span>
           </span>
         );
       })}
