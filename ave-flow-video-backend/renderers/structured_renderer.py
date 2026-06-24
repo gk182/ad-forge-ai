@@ -14,7 +14,6 @@ Key improvements over v1:
 
 from __future__ import annotations
 
-import json
 import os
 import re
 import shutil
@@ -26,6 +25,7 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFilter
 
 from models.video_script import VideoScript, VisualScene
+from services.tts_service import TtsSynthesisRequest, normalize_engine_name, synthesize_speech_to_file
 
 # ── Constants ────────────────────────────────────────────────────
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -420,6 +420,8 @@ def render_video_with_script(
     elevenlabs_api_key: str,
     title: str = 'video',
     use_free_tts: bool = False,
+    voice_engine: str | None = None,
+    kokoro_voice_id: str = 'af_heart',
 ) -> Path:
     """
     Render a TikTok-style ad video from a Gemini-structured VideoScript.
@@ -444,17 +446,22 @@ def render_video_with_script(
         audio_path = work / 'voiceover.mp3'
         print(f"[Render] Generating voiceover ({len(script.script_text)} chars)")
 
-        if use_free_tts:
-            _generate_edge_tts(script.script_text, audio_path)
-        else:
-            _generate_elevenlabs(
-                script.script_text,
-                audio_path,
-                elevenlabs_api_key,
-                script.elevenlabs_voice_id,
-                script.voice_stability,
-                script.voice_similarity,
-            )
+        resolved_engine = normalize_engine_name(
+            voice_engine=voice_engine,
+            use_free_tts=use_free_tts,
+        )
+        synthesize_speech_to_file(
+            TtsSynthesisRequest(
+                text=script.script_text,
+                engine=resolved_engine,
+                elevenlabs_api_key=elevenlabs_api_key,
+                elevenlabs_voice_id=script.elevenlabs_voice_id,
+                kokoro_voice_id=kokoro_voice_id,
+                stability=script.voice_stability,
+                similarity=script.voice_similarity,
+            ),
+            audio_path,
+        )
 
         audio_dur = _media_duration(audio_path)
         if audio_dur < 1.0:
@@ -593,43 +600,3 @@ def _resolve_media(
     if all_images:
         return all_images[0]
     raise RuntimeError("No media available for scene")
-
-
-def _generate_edge_tts(text: str, output: Path) -> None:
-    """Generate voiceover with Edge TTS (free)."""
-    result = subprocess.run(
-        ['edge-tts', '--text', text,
-         '--voice', 'en-US-JennyNeural',
-         '--write-media', str(output)],
-        capture_output=True, text=True,
-    )
-    if result.returncode != 0:
-        raise RuntimeError(f"Edge TTS failed: {result.stderr}")
-
-
-def _generate_elevenlabs(
-    text: str, output: Path,
-    api_key: str, voice_id: str,
-    stability: float, similarity: float,
-) -> None:
-    """Generate voiceover with ElevenLabs API."""
-    import json as _json
-    body = _json.dumps({
-        'text': text,
-        'model_id': 'eleven_multilingual_v2',
-        'voice_settings': {
-            'stability': stability,
-            'similarity_boost': similarity,
-        },
-    }).encode('utf-8')
-    req = urllib.request.Request(
-        f'https://api.elevenlabs.io/v1/text-to-speech/{voice_id}',
-        data=body,
-        headers={
-            'xi-api-key': api_key,
-            'Content-Type': 'application/json',
-        },
-        method='POST',
-    )
-    with urllib.request.urlopen(req, timeout=120) as resp, open(output, 'wb') as out:
-        shutil.copyfileobj(resp, out)

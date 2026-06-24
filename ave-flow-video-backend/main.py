@@ -16,6 +16,12 @@ from pydantic import BaseModel, Field
 from crawl4ai import *
 from crawlers.amazon import parse_amazon_product, parse_amazon_listing, generate_product_markdown, generate_listing_markdown
 from renderers.video_renderer import RenderInput, render_video
+from services.tts_service import (
+    DEFAULT_ELEVENLABS_VOICE,
+    DEFAULT_KOKORO_VOICE,
+    synthesize_speech_to_base64,
+    TtsSynthesisRequest,
+)
 
 # Ensure standard output is UTF-8 to prevent console encode errors
 try:
@@ -136,8 +142,12 @@ class RenderRequest(BaseModel):
 
 class VoiceRequest(BaseModel):
     script: str
-    elevenlabs_api_key: str
-    elevenlabs_voice_id: str = "JBFqnCBsd6RMkjVDRZzb"
+    voice_engine: Optional[str] = None
+    tts_engine: Optional[str] = None
+    elevenlabs_api_key: Optional[str] = None
+    elevenlabs_voice_id: str = DEFAULT_ELEVENLABS_VOICE
+    kokoro_voice_id: str = DEFAULT_KOKORO_VOICE
+    scene_subtitles: list[str] = Field(default_factory=list)
 
 
 class StructuredRenderRequest(BaseModel):
@@ -153,6 +163,8 @@ class StructuredRenderRequest(BaseModel):
     gemini_model: str = "gemini-2.5-flash"
     elevenlabs_api_key: str = ""
     use_free_tts: bool = False
+    voice_engine: Optional[str] = None
+    kokoro_voice_id: str = DEFAULT_KOKORO_VOICE
     custom_notes: str = ""
 
 @app.post("/scrape")
@@ -531,7 +543,9 @@ async def render_structured_video(req: StructuredRenderRequest):
             videos=req.videos,
             elevenlabs_api_key=req.elevenlabs_api_key,
             title=req.title,
-            use_free_tts=req.use_free_tts
+            use_free_tts=req.use_free_tts,
+            voice_engine=req.voice_engine,
+            kokoro_voice_id=req.kokoro_voice_id,
         )
         
         video_url = f"http://127.0.0.1:8000/outputs/renders/{output_path.name}"
@@ -551,44 +565,19 @@ async def render_structured_video(req: StructuredRenderRequest):
 @app.post("/voice")
 async def generate_voice(req: VoiceRequest):
     try:
-        import urllib.request
-        import json
-        import base64
-        
         print(f"[Voice] Generating audio for script length: {len(req.script)}")
-        
-        voice_id = req.elevenlabs_voice_id or "JBFqnCBsd6RMkjVDRZzb"
-        body = {
-            "text": req.script,
-            "model_id": "eleven_multilingual_v2",
-            "voice_settings": {
-                "stability": 0.5,
-                "similarity_boost": 0.75,
-                "style": 0.35,
-                "use_speaker_boost": True,
-            },
-        }
-        
-        request = urllib.request.Request(
-            f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}",
-            data=json.dumps(body).encode("utf-8"),
-            headers={
-                "xi-api-key": req.elevenlabs_api_key,
-                "Content-Type": "application/json",
-                "Accept": "audio/mpeg",
-            },
-            method="POST",
+        result = synthesize_speech_to_base64(
+            TtsSynthesisRequest(
+                text=req.script,
+                engine=req.voice_engine or req.tts_engine or "kokoro",
+                elevenlabs_api_key=req.elevenlabs_api_key,
+                elevenlabs_voice_id=req.elevenlabs_voice_id,
+                kokoro_voice_id=req.kokoro_voice_id,
+                scene_subtitles=req.scene_subtitles,
+            )
         )
-        
-        with urllib.request.urlopen(request, timeout=120) as response:
-            audio_data = response.read()
-            audio_base64 = base64.b64encode(audio_data).decode("utf-8")
-            
-        print(f"[Voice] Successfully generated audio ({len(audio_data)} bytes)")
-        return {
-            "audioBase64": f"data:audio/mpeg;base64,{audio_base64}"
-        }
-        
+        print("[Voice] Successfully generated audio")
+        return result
     except Exception as e:
         error_msg = str(e) or type(e).__name__
         print(f"[Voice Error] {error_msg}")

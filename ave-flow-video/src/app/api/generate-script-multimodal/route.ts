@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import { GoogleGenerativeAI, SchemaType } from '@google/generative-ai';
 import { serverConfig } from '@/config/env';
 
 // Convert base64 string to Gemini part format
@@ -58,6 +58,12 @@ type GeneratedVariant = {
   on_video_script?: string;
 };
 
+type AssetCatalogEntry = {
+  id: string;
+  kind: 'image' | 'video';
+  sourceUrl: string;
+};
+
 const DEFAULT_VARIANT_ANGLES = [
   {
     id: 'hook_benefit',
@@ -106,14 +112,138 @@ function isLikelyVideoUrl(url: string) {
   return /\.(mp4|webm|mov|m4v|ogg)(\?|#|$)/i.test(url);
 }
 
-function extractJsonPayload(text: string) {
+const GEMINI_VARIANTS_RESPONSE_SCHEMA: any = {
+  type: SchemaType.OBJECT,
+  properties: {
+    variants: {
+      type: SchemaType.ARRAY,
+      items: {
+        type: SchemaType.OBJECT,
+        properties: {
+          variant_id: { type: SchemaType.STRING },
+          creative_angle: { type: SchemaType.STRING },
+          script_text: { type: SchemaType.STRING },
+          elevenlabs_voice_id: { type: SchemaType.STRING },
+          rationale: { type: SchemaType.STRING },
+          score: { type: SchemaType.NUMBER },
+          coverageNotes: {
+            type: SchemaType.ARRAY,
+            items: { type: SchemaType.STRING },
+          },
+          scenes: {
+            type: SchemaType.ARRAY,
+            items: {
+              type: SchemaType.OBJECT,
+              properties: {
+                media_type: { type: SchemaType.STRING },
+                media_url: { type: SchemaType.STRING },
+                duration: { type: SchemaType.NUMBER },
+                subtitle: { type: SchemaType.STRING },
+                motion: { type: SchemaType.STRING },
+                transition_type: { type: SchemaType.STRING },
+                video_start_offset: { type: SchemaType.NUMBER },
+              },
+              required: ['media_type', 'media_url', 'duration', 'subtitle', 'motion'],
+            },
+          },
+        },
+        required: [
+          'variant_id',
+          'creative_angle',
+          'script_text',
+          'elevenlabs_voice_id',
+          'rationale',
+          'score',
+          'coverageNotes',
+          'scenes',
+        ],
+      },
+    },
+  },
+  required: ['variants'],
+};
+
+function stripCodeFence(text: string) {
   let cleanJson = text.trim();
   if (cleanJson.startsWith('```json')) {
-    cleanJson = cleanJson.split('```json')[1].split('```')[0].trim();
+    cleanJson = cleanJson.split('```json')[1]?.split('```')[0]?.trim() || cleanJson;
   } else if (cleanJson.startsWith('```')) {
-    cleanJson = cleanJson.split('```')[1].split('```')[0].trim();
+    cleanJson = cleanJson.split('```')[1]?.split('```')[0]?.trim() || cleanJson;
   }
-  return JSON.parse(cleanJson);
+  return cleanJson;
+}
+
+function extractBalancedJsonCandidate(text: string) {
+  const start = text.search(/[\[{]/);
+  if (start === -1) return '';
+
+  const stack: string[] = [];
+  let inString = false;
+  let escaped = false;
+
+  for (let index = start; index < text.length; index += 1) {
+    const char = text[index];
+
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (char === '\\') {
+        escaped = true;
+        continue;
+      }
+      if (char === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (char === '"') {
+      inString = true;
+      continue;
+    }
+
+    if (char === '{' || char === '[') {
+      stack.push(char);
+      continue;
+    }
+
+    if (char === '}' || char === ']') {
+      const last = stack.at(-1);
+      const matches =
+        (char === '}' && last === '{') ||
+        (char === ']' && last === '[');
+      if (!matches) continue;
+      stack.pop();
+      if (stack.length === 0) {
+        return text.slice(start, index + 1);
+      }
+    }
+  }
+
+  return text.slice(start).trim();
+}
+
+function extractJsonPayload(text: string) {
+  const cleanJson = stripCodeFence(text);
+  const candidates = uniqueStrings([
+    cleanJson,
+    extractBalancedJsonCandidate(cleanJson),
+    extractBalancedJsonCandidate(text),
+  ]);
+
+  let lastError: unknown;
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    try {
+      return JSON.parse(candidate);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error('Failed to parse JSON payload.');
 }
 
 async function repairJsonPayloadWithModel(model: any, rawText: string) {
@@ -122,6 +252,8 @@ Fix the malformed Gemini output below and return valid JSON only.
 Preserve all meaningful data, including variant ids, scene media URLs, subtitles, rationales, scores, and coverage notes.
 If there are fewer than 3 variants, keep the best ones and duplicate the best available variant to reach 3.
 Do not add commentary, markdown, or explanation.
+Do not wrap the JSON in code fences.
+Close every open string, array, and object.
 
 Malformed output:
 ${rawText}`;
@@ -129,6 +261,60 @@ ${rawText}`;
   const response = await model.generateContent([repairPrompt]);
   const repairedText = response.response.text();
   return extractJsonPayload(repairedText);
+}
+
+async function regenerateJsonPayloadWithModel(
+  model: any,
+  prompt: string,
+  mediaParts: any[]
+) {
+  const regenerationPrompt = `${prompt}
+
+Return valid JSON only.
+Do not use markdown fences.
+Keep each rationale under 160 characters.
+Keep coverageNotes to at most 3 short strings per variant.
+Ensure every string is properly closed.`;
+
+  const response = await model.generateContent([
+    ...mediaParts,
+    regenerationPrompt,
+  ]);
+  return extractJsonPayload(response.response.text());
+}
+
+async function generateVariantFallback(
+  model: any,
+  basePrompt: string,
+  mediaParts: any[],
+  angle: { id: string; label: string; instruction: string },
+  index: number
+) {
+  const prompt = `${basePrompt}
+
+Return a top-level JSON object with a single "variants" array containing exactly 1 item.
+Use variant_id "${angle.id}".
+Creative angle: ${angle.label}
+Direction: ${angle.instruction}
+Return JSON only.`;
+
+  const response = await model.generateContent([
+    ...mediaParts,
+    prompt,
+  ]);
+
+  const parsed = extractJsonPayload(response.response.text());
+  const variants = Array.isArray(parsed?.variants) ? parsed.variants : [parsed];
+  return variants[0] || {
+    variant_id: angle.id || `variant_${index + 1}`,
+    creative_angle: angle.label,
+    script_text: '',
+    elevenlabs_voice_id: 'JBFqnCBsd6RMkjVDRZzb',
+    rationale: '',
+    score: 70,
+    coverageNotes: [],
+    scenes: [],
+  };
 }
 
 function countWords(text: string) {
@@ -148,7 +334,9 @@ function normalizeScene(
   raw: any,
   index: number,
   imagePool: string[],
-  videoPool: string[]
+  videoPool: string[],
+  assetIdToUrl: Record<string, string>,
+  assetIdToKind: Record<string, 'image' | 'video'>
 ): GeneratedScene {
   const fallbackImage =
     imagePool[index % Math.max(1, imagePool.length)] ||
@@ -156,9 +344,14 @@ function normalizeScene(
     'https://images.unsplash.com/photo-1523275335684-37898b6baf30?auto=format&fit=crop&w=600&q=80';
   const fallbackVideo = videoPool[index % Math.max(1, videoPool.length)] || videoPool[0] || '';
   const requestedMediaType = raw?.media_type === 'video' ? 'video' : 'image';
-  const rawMediaUrl = normalizeText(raw?.media_url);
-  const rawLooksVideo = isLikelyVideoUrl(rawMediaUrl) || videoPool.includes(rawMediaUrl);
-  const resolvedVideoUrl = rawLooksVideo ? rawMediaUrl : fallbackVideo;
+  const rawMediaRef = normalizeText(raw?.media_url);
+  const resolvedAssetUrl = assetIdToUrl[rawMediaRef] || rawMediaRef;
+  const assetKind = assetIdToKind[rawMediaRef];
+  const rawLooksVideo =
+    assetKind === 'video' ||
+    isLikelyVideoUrl(resolvedAssetUrl) ||
+    videoPool.includes(resolvedAssetUrl);
+  const resolvedVideoUrl = rawLooksVideo ? resolvedAssetUrl : fallbackVideo;
   const mediaType: 'image' | 'video' = requestedMediaType === 'video' && isLikelyVideoUrl(resolvedVideoUrl)
     ? 'video'
     : 'image';
@@ -180,8 +373,8 @@ function normalizeScene(
       mediaType === 'video'
         ? resolvedVideoUrl
         : requestedMediaType === 'video'
-          ? fallbackImage || rawMediaUrl
-          : rawMediaUrl || fallbackImage,
+          ? fallbackImage || resolvedAssetUrl
+          : resolvedAssetUrl || fallbackImage,
     duration: toPositiveNumber(raw?.duration, 3.5),
     subtitle: normalizeText(raw?.subtitle) || 'Check this out.',
     motion: normalizeText(raw?.motion) || (mediaType === 'video' ? 'static' : 'center_zoom'),
@@ -190,11 +383,19 @@ function normalizeScene(
   };
 }
 
-function normalizeVariant(raw: any, index: number, mediaPool: string[]): GeneratedVariant {
+function normalizeVariant(
+  raw: any,
+  index: number,
+  mediaPool: string[],
+  assetIdToUrl: Record<string, string>,
+  assetIdToKind: Record<string, 'image' | 'video'>
+): GeneratedVariant {
   const imagePool = mediaPool.filter((url) => !isLikelyVideoUrl(url));
   const videoPool = mediaPool.filter((url) => isLikelyVideoUrl(url));
   const scenes = Array.isArray(raw?.scenes)
-    ? raw.scenes.map((scene: unknown, sceneIndex: number) => normalizeScene(scene, sceneIndex, imagePool, videoPool))
+    ? raw.scenes.map((scene: unknown, sceneIndex: number) =>
+        normalizeScene(scene, sceneIndex, imagePool, videoPool, assetIdToUrl, assetIdToKind)
+      )
     : [];
   const scriptText = normalizeText(raw?.script_text) || scenes.map((scene: GeneratedScene) => scene.subtitle).join(' ').trim();
   const voiceId = normalizeText(raw?.elevenlabs_voice_id) || 'JBFqnCBsd6RMkjVDRZzb';
@@ -309,6 +510,7 @@ export async function POST(req: NextRequest) {
       model: geminiModel,
       generationConfig: {
         responseMimeType: 'application/json',
+        responseSchema: GEMINI_VARIANTS_RESPONSE_SCHEMA,
         temperature: 0.85,
         maxOutputTokens: 8192,
       },
@@ -375,22 +577,36 @@ Each scene represents a video slice and must include:
 
 Keep the variants meaningfully different in hook, pacing, or closing angle. Return JSON only.`;
 
-    // Map of IDs to base64 images to restore them later
-    const base64Map: Record<string, string> = {};
-    const displayImages = (selectedImages || []).map((url: string, index: number) => {
-      if (typeof url === 'string' && url.startsWith('data:image/')) {
-        const id = `uploaded_image_${index}`;
-        base64Map[id] = url;
-        return id;
-      }
-      return url;
+    const assetCatalog: AssetCatalogEntry[] = [];
+    const assetIdToUrl: Record<string, string> = {};
+    const assetIdToKind: Record<string, 'image' | 'video'> = {};
+    const imageAssetRefs: string[] = [];
+    const videoAssetRefs: string[] = [];
+
+    uniqueStrings(selectedImages || []).forEach((url, index) => {
+      const id = `image_asset_${index + 1}`;
+      assetCatalog.push({ id, kind: 'image', sourceUrl: url });
+      assetIdToUrl[id] = url;
+      assetIdToKind[id] = 'image';
+      imageAssetRefs.push(id);
     });
 
-    const mediaPool = uniqueStrings([...displayImages, ...(productVideos || [])]);
+    uniqueStrings(productVideos || []).forEach((url, index) => {
+      const id = `video_asset_${index + 1}`;
+      assetCatalog.push({ id, kind: 'video', sourceUrl: url });
+      assetIdToUrl[id] = url;
+      assetIdToKind[id] = 'video';
+      videoAssetRefs.push(id);
+    });
+
+    const mediaPool = assetCatalog.map((asset) => asset.sourceUrl);
     const variantDescriptions = DEFAULT_VARIANT_ANGLES.map(
       (variant, idx) =>
         `${idx + 1}. ${variant.label}: ${variant.instruction}`
     ).join('\n');
+    const assetListForPrompt = assetCatalog
+      .map((asset) => `${asset.id} (${asset.kind})`)
+      .join(', ');
 
     // Build script mode-specific instructions
     let scriptModeInstruction = '';
@@ -432,9 +648,11 @@ ${orderedAssetsInstruction}
 Variant directions:
 ${variantDescriptions}
 
-Please map the "media_url" fields in "scenes" only to the available image and video URLs below.
-Images: ${JSON.stringify(displayImages)}
-Videos: ${JSON.stringify(productVideos || [])}
+Please map the "media_url" fields in "scenes" only to the available asset IDs below.
+Do not output raw URLs in "media_url". Output only an asset id like "image_asset_1" or "video_asset_1".
+Available assets: ${assetListForPrompt}
+Images: ${JSON.stringify(imageAssetRefs)}
+Videos: ${JSON.stringify(videoAssetRefs)}
 Rules:
 - Return JSON only.
 - Return a top-level object with a "variants" array of length 3.
@@ -442,7 +660,10 @@ Rules:
 - Each variant must be meaningfully different in hook, pacing, or closing angle.
 - Each scene must have detailed and descriptive subtitle text that matches its duration (approx. 2.5 to 3.5 words per second of duration to prevent silent gaps when spoken), a realistic duration, and a media_url from the provided assets.
 - For video scenes, use motion "static".
+- Keep each rationale under 160 characters.
+- Keep coverageNotes to at most 3 short bullet-style strings per variant.
 - Keep the total scene duration close to the target duration.
+- Never emit partial URLs or partial asset IDs.
 - Keep the script natural, TikTok-friendly, and product-specific.`;
 
     // Execute multimodal request
@@ -464,7 +685,19 @@ Rules:
         parsed = await repairJsonPayloadWithModel(model, text);
       } catch (repairError) {
         console.error('[Gemini Multimodal] Repair pass failed:', repairError);
-        throw parseError;
+        console.warn('[Gemini Multimodal] Regenerating structured payload with stricter constraints.');
+        try {
+          parsed = await regenerateJsonPayloadWithModel(model, userPrompt, mediaParts);
+        } catch (regenerationError) {
+          console.error('[Gemini Multimodal] Regeneration pass failed:', regenerationError);
+          console.warn('[Gemini Multimodal] Falling back to per-variant generation.');
+          const fallbackVariants = await Promise.all(
+            DEFAULT_VARIANT_ANGLES.map((angle, index) =>
+              generateVariantFallback(model, userPrompt, mediaParts, angle, index)
+            )
+          );
+          parsed = { variants: fallbackVariants };
+        }
       }
     }
     const rawVariants = Array.isArray(parsed?.variants) ? parsed.variants : [parsed];
@@ -472,9 +705,9 @@ Rules:
       .filter(Boolean)
       .slice(0, 3)
       .map((variant: unknown, index: number) => {
-        const normalized = normalizeVariant(variant, index, mediaPool);
+        const normalized = normalizeVariant(variant, index, mediaPool, assetIdToUrl, assetIdToKind);
         normalized.scenes = normalized.scenes.map((scene: GeneratedScene, sceneIndex: number) => {
-          const restoredUrl = base64Map[scene.media_url];
+          const restoredUrl = assetIdToUrl[scene.media_url];
           return {
             ...scene,
             media_url: restoredUrl || scene.media_url,
@@ -528,7 +761,7 @@ Rules:
       ...variant,
       scenes: variant.scenes.map((scene: GeneratedScene) => ({
         ...scene,
-        media_url: base64Map[scene.media_url] || scene.media_url,
+        media_url: assetIdToUrl[scene.media_url] || scene.media_url,
       })),
     }));
     responsePayload.selectedVariant = {
@@ -536,7 +769,7 @@ Rules:
       on_video_script: onVideoScript,
       scenes: responsePayload.selectedVariant.scenes.map((scene: GeneratedScene) => ({
         ...scene,
-        media_url: base64Map[scene.media_url] || scene.media_url,
+        media_url: assetIdToUrl[scene.media_url] || scene.media_url,
       })),
     };
     responsePayload.script_text = responsePayload.selectedVariant.script_text;
