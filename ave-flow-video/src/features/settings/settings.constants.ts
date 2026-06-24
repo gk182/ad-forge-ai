@@ -57,7 +57,7 @@ export const DEFAULT_AVATAR_URL =
   'https://d-id-public-bucket.s3.us-west-2.amazonaws.com/alice.jpg';
 
 export const TTS_PROVIDERS = [
-  { id: 'free', label: 'Free (Microsoft Edge TTS)', cost: 'Free', icon: '🎙️' },
+  { id: 'free', label: 'Free (Kokoro Local TTS)', cost: 'Free', icon: '🎙️' },
   { id: 'elevenlabs', label: 'ElevenLabs (Premium)', cost: 'Paid', icon: '✨' },
 ] as const;
 

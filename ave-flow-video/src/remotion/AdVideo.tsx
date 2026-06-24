@@ -10,6 +10,12 @@ import {
   useVideoConfig,
 } from 'remotion';
 
+export interface WordTiming {
+  word: string;
+  start: number;
+  end: number;
+}
+
 export interface Scene {
   media_type: 'image' | 'video';
   media_url: string;
@@ -18,6 +24,7 @@ export interface Scene {
   motion: string; // 'center_zoom' | 'slow_zoom_out' | 'pan_left' | 'pan_right' | 'drift_up' | 'drift_down' | 'ken_burns_tl' | 'ken_burns_br' | 'static'
   transition_type?: 'fade' | 'slide_left' | 'slide_right' | 'slide_up' | 'slide_down' | 'zoom_in' | 'none';
   video_start_offset?: number;
+  word_timings?: WordTiming[];
 }
 
 export interface AdVideoProps {
@@ -199,13 +206,22 @@ const KaraokeSubtitles: React.FC<{
   textColor: string;
   highlightColor: string;
   durationFrames: number;
+  alignedWordTimings?: WordTiming[];
   animationStyle?: 'bounce' | 'glow' | 'slide_up' | 'rotate' | 'fade';
-}> = ({ text, textColor, highlightColor, durationFrames, animationStyle = 'bounce' }) => {
+}> = ({ text, textColor, highlightColor, durationFrames, alignedWordTimings, animationStyle = 'bounce' }) => {
   const frame = useCurrentFrame();
+  const { fps } = useVideoConfig();
   
   const words = useMemo(() => text.split(/\s+/).filter(Boolean), [text]);
 
   const wordTimings = useMemo(() => {
+    if (Array.isArray(alignedWordTimings) && alignedWordTimings.length > 0) {
+      return alignedWordTimings.map((timing) => ({
+        word: timing.word,
+        start: timing.start * fps,
+        end: timing.end * fps,
+      }));
+    }
     // Longer words should occupy more duration. Base weight = 2 + char length
     const weights = words.map((w) => w.length + 2);
     const totalWeight = weights.reduce((sum, w) => sum + w, 0);
@@ -219,7 +235,7 @@ const KaraokeSubtitles: React.FC<{
       accumulatedFrames = end;
       return { word, start, end };
     });
-  }, [words, durationFrames]);
+  }, [words, durationFrames, alignedWordTimings, fps]);
 
   return (
     <div
@@ -514,6 +530,7 @@ const SceneContainer: React.FC<{
             textColor={textColor}
             highlightColor={highlightColor}
             durationFrames={durationFrames}
+            alignedWordTimings={scene.word_timings}
             animationStyle={subtitleStyle}
           />
         </div>

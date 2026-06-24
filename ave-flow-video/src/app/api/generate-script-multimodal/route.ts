@@ -106,14 +106,87 @@ function isLikelyVideoUrl(url: string) {
   return /\.(mp4|webm|mov|m4v|ogg)(\?|#|$)/i.test(url);
 }
 
-function extractJsonPayload(text: string) {
+function stripCodeFence(text: string) {
   let cleanJson = text.trim();
   if (cleanJson.startsWith('```json')) {
-    cleanJson = cleanJson.split('```json')[1].split('```')[0].trim();
+    cleanJson = cleanJson.split('```json')[1]?.split('```')[0]?.trim() || cleanJson;
   } else if (cleanJson.startsWith('```')) {
-    cleanJson = cleanJson.split('```')[1].split('```')[0].trim();
+    cleanJson = cleanJson.split('```')[1]?.split('```')[0]?.trim() || cleanJson;
   }
-  return JSON.parse(cleanJson);
+  return cleanJson;
+}
+
+function extractBalancedJsonCandidate(text: string) {
+  const start = text.search(/[\[{]/);
+  if (start === -1) return '';
+
+  const stack: string[] = [];
+  let inString = false;
+  let escaped = false;
+
+  for (let index = start; index < text.length; index += 1) {
+    const char = text[index];
+
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (char === '\\') {
+        escaped = true;
+        continue;
+      }
+      if (char === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (char === '"') {
+      inString = true;
+      continue;
+    }
+
+    if (char === '{' || char === '[') {
+      stack.push(char);
+      continue;
+    }
+
+    if (char === '}' || char === ']') {
+      const last = stack.at(-1);
+      const matches =
+        (char === '}' && last === '{') ||
+        (char === ']' && last === '[');
+      if (!matches) continue;
+      stack.pop();
+      if (stack.length === 0) {
+        return text.slice(start, index + 1);
+      }
+    }
+  }
+
+  return text.slice(start).trim();
+}
+
+function extractJsonPayload(text: string) {
+  const cleanJson = stripCodeFence(text);
+  const candidates = uniqueStrings([
+    cleanJson,
+    extractBalancedJsonCandidate(cleanJson),
+    extractBalancedJsonCandidate(text),
+  ]);
+
+  let lastError: unknown;
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    try {
+      return JSON.parse(candidate);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error('Failed to parse JSON payload.');
 }
 
 async function repairJsonPayloadWithModel(model: any, rawText: string) {
@@ -122,6 +195,8 @@ Fix the malformed Gemini output below and return valid JSON only.
 Preserve all meaningful data, including variant ids, scene media URLs, subtitles, rationales, scores, and coverage notes.
 If there are fewer than 3 variants, keep the best ones and duplicate the best available variant to reach 3.
 Do not add commentary, markdown, or explanation.
+Do not wrap the JSON in code fences.
+Close every open string, array, and object.
 
 Malformed output:
 ${rawText}`;
@@ -129,6 +204,26 @@ ${rawText}`;
   const response = await model.generateContent([repairPrompt]);
   const repairedText = response.response.text();
   return extractJsonPayload(repairedText);
+}
+
+async function regenerateJsonPayloadWithModel(
+  model: any,
+  prompt: string,
+  mediaParts: any[]
+) {
+  const regenerationPrompt = `${prompt}
+
+Return valid JSON only.
+Do not use markdown fences.
+Keep each rationale under 160 characters.
+Keep coverageNotes to at most 3 short strings per variant.
+Ensure every string is properly closed.`;
+
+  const response = await model.generateContent([
+    ...mediaParts,
+    regenerationPrompt,
+  ]);
+  return extractJsonPayload(response.response.text());
 }
 
 function countWords(text: string) {
@@ -411,6 +506,8 @@ Rules:
 - Each variant must be meaningfully different in hook, pacing, or closing angle.
 - Each scene must have short subtitle text, a realistic duration, and a media_url from the provided assets.
 - For video scenes, use motion "static".
+- Keep each rationale under 160 characters.
+- Keep coverageNotes to at most 3 short bullet-style strings per variant.
 - Keep the total scene duration close to the target duration.
 - Keep the script natural, TikTok-friendly, and product-specific.`;
 
@@ -433,7 +530,13 @@ Rules:
         parsed = await repairJsonPayloadWithModel(model, text);
       } catch (repairError) {
         console.error('[Gemini Multimodal] Repair pass failed:', repairError);
-        throw parseError;
+        console.warn('[Gemini Multimodal] Regenerating structured payload with stricter constraints.');
+        try {
+          parsed = await regenerateJsonPayloadWithModel(model, userPrompt, mediaParts);
+        } catch (regenerationError) {
+          console.error('[Gemini Multimodal] Regeneration pass failed:', regenerationError);
+          throw parseError;
+        }
       }
     }
     const rawVariants = Array.isArray(parsed?.variants) ? parsed.variants : [parsed];

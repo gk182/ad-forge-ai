@@ -24,3 +24,6 @@ anyio>=4.0.0
 httpx>=0.25.0
 cffi>=1.15.0
 cryptography>=41.0.0
+edge-tts>=6.1.12
+kokoro>=0.9.4
+soundfile>=0.12.1

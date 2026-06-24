@@ -12,6 +12,7 @@ ave-flow-video/.env.test.local
 ave-flow-video/.env.production.local
 ave-flow-video/*.tsbuildinfo
 ave-flow-video/next-env.d.ts
+ave-flow-video/docs/
 
 # --- Backend (Python FastAPI) ---
 ave-flow-video-backend/__pycache__/
@@ -43,6 +44,7 @@ ave-flow-video-backend/ENV/
 ave-flow-video-backend/env/
 ave-flow-video-backend/pip-log.txt
 ave-flow-video-backend/pip-delete-this-directory.txt
+ave-flow-video-backend/docs/
 
 # --- Backend Temporary/Outputs ---
 ave-flow-video-backend/outputs/renders/*

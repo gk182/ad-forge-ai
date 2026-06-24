@@ -3,7 +3,7 @@
 import { useState, useRef, useMemo, useEffect } from 'react';
 import { Player, PlayerRef } from '@remotion/player';
 import { AdVideo } from '@/remotion/AdVideo';
-import type { Scene } from '@/remotion/AdVideo';
+import type { Scene, WordTiming } from '@/remotion/AdVideo';
 import type { ScriptVariant } from '@/features/pipeline/pipeline.types';
 import {
   Play,
@@ -67,6 +67,23 @@ const TRANSITION_TYPES = [
 ];
 
 type BuildPhase = 'idle' | 'generating-voice' | 'voice-ready' | 'rendering' | 'completed' | 'error';
+
+interface VoiceSceneAlignment {
+  sceneIndex: number;
+  subtitle: string;
+  start: number;
+  end: number;
+  duration: number;
+  wordTimings: WordTiming[];
+}
+
+interface VoiceApiResponse {
+  audioBase64: string;
+  audioDuration?: number;
+  alignment?: WordTiming[];
+  sceneAlignments?: VoiceSceneAlignment[];
+  alignmentSource?: string;
+}
 
 function isLikelyVideoUrl(url: string) {
   if (!url) return false;
@@ -163,7 +180,13 @@ export function StudioEditor({
   const confidenceLabel =
     typeof confidence === 'number' ? `${Math.round(confidence * 100)}%` : 'n/a';
 
+  const stripSceneAlignment = (scene: Scene): Scene => ({
+    ...scene,
+    word_timings: undefined,
+  });
+
   const invalidateGeneratedOutput = () => {
+    setScenes((prev) => prev.map(stripSceneAlignment));
     setAudioUrl('');
     setAudioDuration(undefined);
     setExportUrl('');
@@ -316,22 +339,47 @@ export function StudioEditor({
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         script: fullScript,
+        sceneSubtitles: scenes.map((scene) => scene.subtitle),
         elevenLabsApiKey: apiKeys.elevenLabsApiKey || '',
         elevenLabsVoiceId: voiceId,
         useFreeTTS,
       }),
     });
 
-    const data = await res.json();
+    const data = (await res.json()) as VoiceApiResponse & { error?: string };
     if (!res.ok) throw new Error(data.error || 'Failed to generate voice');
 
-    const audioBase64 = data.audioBase64 as string;
+    const audioBase64 = data.audioBase64;
     setAudioUrl(audioBase64);
 
-    const duration = await waitForAudioDuration(audioBase64);
+    if (Array.isArray(data.sceneAlignments) && data.sceneAlignments.length === scenes.length) {
+      setScenes((prev) =>
+        prev.map((scene, index) => {
+          const alignment = data.sceneAlignments?.find((item) => item.sceneIndex === index);
+          if (!alignment) {
+            return stripSceneAlignment(scene);
+          }
+          return {
+            ...scene,
+            duration: alignment.duration || scene.duration,
+            word_timings: alignment.wordTimings,
+          };
+        })
+      );
+    } else {
+      setScenes((prev) => prev.map(stripSceneAlignment));
+    }
+
+    const duration = data.audioDuration && data.audioDuration > 0
+      ? data.audioDuration
+      : await waitForAudioDuration(audioBase64);
     setAudioDuration(duration);
     setBuildPhase('voice-ready');
-    toast.success('Voice track generated successfully.', { id: 'build-toast', icon: '🎙️' });
+    const toastMessage =
+      data.alignmentSource === 'gentle'
+        ? 'Voice track generated with Gentle alignment.'
+        : 'Voice track generated successfully.';
+    toast.success(toastMessage, { id: 'build-toast', icon: '🎙️' });
 
     return { audioBase64, duration };
   };
