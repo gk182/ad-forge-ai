@@ -21,8 +21,26 @@ export async function GET(
     // 1. Check if the file exists locally inside the Next.js public/renders directory
     const localFilePath = path.resolve('public', 'renders', filename);
     if (fs.existsSync(localFilePath)) {
-      const fileStream = fs.createReadStream(localFilePath);
       const fileStats = fs.statSync(localFilePath);
+      const nodeStream = fs.createReadStream(localFilePath);
+
+      // Convert Node.js readable stream to Web ReadableStream
+      const webStream = new ReadableStream({
+        start(controller) {
+          nodeStream.on('data', (chunk) => {
+            controller.enqueue(chunk);
+          });
+          nodeStream.on('end', () => {
+            controller.close();
+          });
+          nodeStream.on('error', (err) => {
+            controller.error(err);
+          });
+        },
+        cancel() {
+          nodeStream.destroy();
+        }
+      });
 
       const headers = new Headers();
       headers.set('Content-Type', 'video/mp4');
@@ -31,7 +49,7 @@ export async function GET(
       headers.set('Access-Control-Allow-Origin', '*');
 
       // Return local stream response
-      return new Response(fileStream as any, {
+      return new Response(webStream, {
         status: 200,
         headers,
       });

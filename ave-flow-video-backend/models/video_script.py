@@ -72,3 +72,5 @@ class VideoScript(BaseModel):
     )
     voice_stability: float = Field(default=0.5, ge=0.0, le=1.0)
     voice_similarity: float = Field(default=0.75, ge=0.0, le=1.0)
+
+

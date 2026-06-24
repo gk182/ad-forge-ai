@@ -8,6 +8,9 @@ import {
   interpolate,
   useCurrentFrame,
   useVideoConfig,
+  staticFile,
+  OffthreadVideo,
+  useRemotionEnvironment,
 } from 'remotion';
 
 export interface WordTiming {
@@ -18,6 +21,16 @@ export interface WordTiming {
   isEstimated?: boolean;
   confidence?: number | null;
 }
+const resolveMediaUrl = (url: string) => {
+  if (!url) return '';
+  if (url.startsWith('/cache/')) {
+    return staticFile(url.substring(1));
+  }
+  if (url.startsWith('cache/')) {
+    return staticFile(url);
+  }
+  return url;
+};
 
 export interface Scene {
   media_type: 'image' | 'video';
@@ -28,6 +41,8 @@ export interface Scene {
   transition_type?: 'fade' | 'slide_left' | 'slide_right' | 'slide_up' | 'slide_down' | 'zoom_in' | 'none';
   video_start_offset?: number;
   word_timings?: WordTiming[];
+  audioUrl?: string;
+  audioDuration?: number;
 }
 
 export interface AdVideoProps {
@@ -124,6 +139,8 @@ const SceneMedia: React.FC<{
     };
   }, [scene, frame, durationFrames]);
 
+  const env = useRemotionEnvironment();
+
   const isLikelyVideoUrl = (url: string) => {
     if (!url) return false;
     if (/^data:video\//i.test(url)) return true;
@@ -132,9 +149,26 @@ const SceneMedia: React.FC<{
 
   if (scene.media_type === 'video' && isLikelyVideoUrl(scene.media_url)) {
     const startFromFrame = Math.round((scene.video_start_offset || 0) * fps);
+    const videoUrl = resolveMediaUrl(scene.media_url);
+
+    if (env.isRendering) {
+      return (
+        <OffthreadVideo
+          src={videoUrl}
+          style={{
+            width: '100%',
+            height: '100%',
+            objectFit: 'cover',
+          }}
+          trimBefore={startFromFrame}
+          muted
+        />
+      );
+    }
+
     return (
       <Video
-        src={scene.media_url}
+        src={videoUrl}
         style={{
           width: '100%',
           height: '100%',
@@ -143,6 +177,7 @@ const SceneMedia: React.FC<{
         startFrom={startFromFrame}
         muted
         loop
+        delayRenderTimeoutInMilliseconds={120000}
         onError={(err) => {
           console.warn('[Remotion] Video playback error, falling back to static frame.', err);
         }}
@@ -176,7 +211,7 @@ const SceneMedia: React.FC<{
     <div style={{ width: '100%', height: '100%', position: 'relative', overflow: 'hidden' }}>
       {/* Blurred background for padding */}
       <Img
-        src={scene.media_url}
+        src={resolveMediaUrl(scene.media_url)}
         style={{
           position: 'absolute',
           width: '120%',
@@ -190,7 +225,7 @@ const SceneMedia: React.FC<{
       />
       {/* Foreground image (not stretched, keeps aspect ratio) */}
       <Img
-        src={scene.media_url}
+        src={resolveMediaUrl(scene.media_url)}
         style={{
           position: 'absolute',
           width: '100%',
@@ -242,6 +277,47 @@ const KaraokeSubtitles: React.FC<{
     });
   }, [words, durationFrames, alignedWordTimings, fps]);
 
+  // Group word timings into sequential lines (chunks)
+  // Split whenever:
+  // 1. Current chunk has 3-4 words (limit to 4 words max)
+  // 2. Or total characters in the current line exceeds 24 characters
+  const chunks = useMemo(() => {
+    const list: typeof wordTimings[] = [];
+    let currentChunk: typeof wordTimings = [];
+    let currentChars = 0;
+
+    wordTimings.forEach((wt) => {
+      if (currentChunk.length >= 4 || currentChars + wt.word.length > 24) {
+        if (currentChunk.length > 0) {
+          list.push(currentChunk);
+        }
+        currentChunk = [wt];
+        currentChars = wt.word.length;
+      } else {
+        currentChunk.push(wt);
+        currentChars += wt.word.length + 1; // +1 for space
+      }
+    });
+
+    if (currentChunk.length > 0) {
+      list.push(currentChunk);
+    }
+    return list;
+  }, [wordTimings]);
+
+  // Find the active chunk based on the current frame
+  const activeChunk = useMemo(() => {
+    if (chunks.length === 0) return [];
+    const active = chunks.find((chunk) => {
+      const chunkStart = chunk[0].start;
+      const chunkEnd = chunk[chunk.length - 1].end;
+      return frame >= chunkStart && frame < chunkEnd;
+    });
+    if (active) return active;
+    if (frame < chunks[0][0].start) return chunks[0];
+    return chunks[chunks.length - 1];
+  }, [chunks, frame]);
+
   return (
     <div
       style={{
@@ -286,7 +362,7 @@ const KaraokeSubtitles: React.FC<{
               transform = `translateY(${finalY}px) scale(1.1)`;
               break;
             case 'rotate':
-              const angle = idx % 2 === 0 ? -6 : 6;
+              const angle = originalIdx % 2 === 0 ? -6 : 6;
               const currentAngle = interpolate(age, [0, 3], [0, angle], {
                 extrapolateRight: 'clamp',
               });
@@ -318,7 +394,7 @@ const KaraokeSubtitles: React.FC<{
 
         return (
           <span
-            key={idx}
+            key={originalIdx}
             style={{
               display: 'inline-flex',
               position: 'relative',
@@ -484,14 +560,15 @@ const SceneContainer: React.FC<{
       >
         {scene.media_type === 'video' ? (
           <Video
-            src={scene.media_url}
+            src={resolveMediaUrl(scene.media_url)}
             style={{ width: '100%', height: '100%', objectFit: 'cover' }}
             muted
             loop
+            delayRenderTimeoutInMilliseconds={120000}
           />
         ) : (
           <Img
-            src={scene.media_url}
+            src={resolveMediaUrl(scene.media_url)}
             style={{ width: '100%', height: '100%', objectFit: 'cover' }}
           />
         )}
@@ -606,14 +683,20 @@ export const AdVideo: React.FC<AdVideoProps> = ({
 
   // Calculate actual duration of all scenes combined
   const totalPlannedDuration = useMemo(() => {
-    return scenes.reduce((sum, scene) => sum + scene.duration, 0);
-  }, [scenes]);
+    return scenes.reduce((sum, scene) => {
+      const sceneDur = (audioUrl === 'per-scene' && scene.audioDuration)
+        ? Math.max(scene.duration, scene.audioDuration)
+        : scene.duration;
+      return sum + sceneDur;
+    }, 0);
+  }, [scenes, audioUrl]);
 
   // Scaling factor to match audio duration
   const scaleFactor = useMemo(() => {
+    if (audioUrl === 'per-scene') return 1;
     if (!audioDuration || totalPlannedDuration === 0) return 1;
     return audioDuration / totalPlannedDuration;
-  }, [audioDuration, totalPlannedDuration]);
+  }, [audioDuration, totalPlannedDuration, audioUrl]);
 
   // Compute timing for each scene sequence, supporting overlaps
   const sceneTimings = useMemo(() => {
@@ -621,9 +704,13 @@ export const AdVideo: React.FC<AdVideoProps> = ({
     const transitionFrames = 15; // 0.5 seconds transition
     
     return scenes.map((scene, idx) => {
+      const scenePlannedDuration = (audioUrl === 'per-scene' && scene.audioDuration)
+        ? Math.max(scene.duration, scene.audioDuration)
+        : scene.duration;
+
       const durationFrames = Math.max(
         30, // Minimum 1 second per scene
-        Math.round(scene.duration * scaleFactor * fps)
+        Math.round(scenePlannedDuration * scaleFactor * fps)
       );
       
       const startFrame = currentFrame;
@@ -641,7 +728,7 @@ export const AdVideo: React.FC<AdVideoProps> = ({
         scene,
       };
     });
-  }, [scenes, scaleFactor, fps]);
+  }, [scenes, scaleFactor, fps, audioUrl]);
 
   const frame = useCurrentFrame();
   // Total frames is the end of the last scene
@@ -661,7 +748,7 @@ export const AdVideo: React.FC<AdVideoProps> = ({
       }}
     >
       {/* 1. Background Music/Voiceover Track */}
-      {audioUrl && <Audio src={audioUrl} />}
+      {audioUrl && audioUrl !== 'per-scene' && <Audio src={resolveMediaUrl(audioUrl)} />}
 
       {/* 2. Media Layers */}
       {sceneTimings.map(({ startFrame, durationFrames, sequenceDuration, scene }, idx) => {
@@ -672,6 +759,7 @@ export const AdVideo: React.FC<AdVideoProps> = ({
             from={startFrame}
             durationInFrames={sequenceDuration}
           >
+            {scene.audioUrl && <Audio src={resolveMediaUrl(scene.audioUrl)} />}
             <SceneContainer
               scene={scene}
               nextScene={nextScene}

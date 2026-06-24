@@ -3,7 +3,7 @@ import asyncio
 
 # Set Windows Event Loop Policy for Playwright subprocesses
 if sys.platform == 'win32':
-    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+    asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
 import os
 from pathlib import Path
@@ -167,23 +167,6 @@ class StructuredRenderRequest(BaseModel):
     kokoro_voice_id: str = DEFAULT_KOKORO_VOICE
     custom_notes: str = ""
 
-# Custom Playwright Hook for Network Interception
-async def log_network_requests(page, context, **kwargs):
-    """
-    Hook to monitor/intercept network requests using Playwright API.
-    """
-    print("\n[Network Hook] Setting up network request interception...")
-    
-    # Event listener for all requests
-    def on_request(request):
-        url = request.url
-        resource_type = request.resource_type
-        if "amazon.com" in url and resource_type in ["fetch", "xhr", "document"]:
-            print(f"  -> [Network Intercept] {resource_type.upper()}: {url[:90]}...")
-            
-    page.on("request", on_request)
-    return page
-
 @app.post("/scrape")
 async def scrape_url(req: CrawlRequest):
     url = req.url
@@ -195,14 +178,80 @@ async def scrape_url(req: CrawlRequest):
         verbose=True
     )
     
+    # JS Injection: scroll page progressively, trigger lazy-loaded images, click video thumbnails, and play videos
+    js_click_video = """
+    // 1. Progressive scroll to trigger IntersectionObserver-based lazy loaders
+    const scrollStep = Math.max(300, window.innerHeight);
+    const maxScroll = document.body.scrollHeight;
+    for (let y = 0; y < maxScroll; y += scrollStep) {
+        window.scrollTo(0, y);
+        await new Promise(r => setTimeout(r, 300));
+    }
+    window.scrollTo(0, 0);
+    await new Promise(r => setTimeout(r, 500));
+
+    // 2. Force lazy-loaded images: convert data-src, data-lazy-src, data-original to src
+    document.querySelectorAll('img[data-src], img[data-lazy-src], img[data-original], img[data-srcset]').forEach(img => {
+        const lazySrc = img.getAttribute('data-src') || img.getAttribute('data-lazy-src') || img.getAttribute('data-original');
+        if (lazySrc) img.setAttribute('src', lazySrc);
+        const lazySrcset = img.getAttribute('data-srcset');
+        if (lazySrcset) img.setAttribute('srcset', lazySrcset);
+    });
+
+    // 3. Force lazy-loaded videos: convert data-src on video/source elements
+    document.querySelectorAll('video[data-src], video source[data-src]').forEach(el => {
+        const lazySrc = el.getAttribute('data-src');
+        if (lazySrc) el.setAttribute('src', lazySrc);
+    });
+
+    // 4. Click Amazon video thumbnails to trigger lazy-loaded video playback
+    const videoThumbs = document.querySelectorAll('#altImages li.videoThumbnail input, #altImages li.videoThumbnail, .video-thumbnail, [data-video-url]');
+    videoThumbs.forEach(thumb => {
+        try { thumb.click(); } catch (e) {}
+    });
+    await new Promise(r => setTimeout(r, 2500));
+
+    // 5. Trigger muted playback on all discovered <video> elements to force media stream requests
+    document.querySelectorAll('video').forEach(v => {
+        try {
+            v.muted = true;
+            v.play().catch(() => {});
+        } catch (e) {}
+    });
+    await new Promise(r => setTimeout(r, 1500));
+    """
+    
     # Configure Run Options
     run_config = CrawlerRunConfig(
         scan_full_page=True,        # Automatically scrolls to the bottom of the page
         wait_for_images=True,       # Ensures lazy-loaded images are fully rendered
         delay_before_return_html=2.0, # Extra wait for pending AJAX/network requests
+        js_code=js_click_video,     # Execute custom JS to simulate user interactions
         cache_mode=CacheMode.BYPASS # Always request fresh content
     )
     
+    intercepted_videos = set()
+    
+    # Custom Playwright Hook for Network Interception (requests + responses)
+    async def log_network_requests(page, context, **kwargs):
+        print("\n[Network Hook] Setting up network request interception...")
+        def on_request(request):
+            req_url = request.url
+            if ".mp4" in req_url or ".m3u8" in req_url or ".webm" in req_url or ".mov" in req_url:
+                print(f"  -> [Network Intercept VIDEO REQUEST] {req_url[:90]}...")
+                intercepted_videos.add(req_url)
+        
+        def on_response(response):
+            content_type = response.headers.get("content-type", "")
+            resp_url = response.url
+            if "video/" in content_type or "mpegurl" in content_type.lower():
+                print(f"  -> [Network Intercept VIDEO RESPONSE] {resp_url[:90]}... (type: {content_type})")
+                intercepted_videos.add(resp_url)
+        
+        page.on("request", on_request)
+        page.on("response", on_response)
+        return page
+
     try:
         async with AsyncWebCrawler(config=browser_config) as crawler:
             # Register the network logging / interception hook
@@ -288,6 +337,18 @@ async def scrape_url(req: CrawlRequest):
                         seen_vid = set()
                         videos = [x for x in vid_urls if not (x in seen_vid or seen_vid.add(x))]
                 
+            import urllib.parse
+            if image:
+                image = urllib.parse.urljoin(url, image)
+            screenshots = [urllib.parse.urljoin(url, s) for s in screenshots if s]
+            
+            # Merge intercepted videos from the network hook
+            if intercepted_videos:
+                print(f"[Network] Merging {len(intercepted_videos)} intercepted videos into results")
+                videos.extend(list(intercepted_videos))
+                
+            videos = [urllib.parse.urljoin(url, v) for v in videos if v]
+
             # Write to outputs/result.md ALWAYS
             result_md_path = "outputs/result.md"
             with open(result_md_path, "w", encoding="utf-8") as f:
@@ -320,14 +381,83 @@ async def scrape_url(req: CrawlRequest):
                         print(f"[Image Filter] Skipped image: {str(e)[:50]}")
                         continue
                 print(f"[Image Filter] Kept {len(filtered_screenshots)} quality images")
-            # Filter videos — keep only real downloadable URLs
-            filtered_videos = [
-                v for v in videos 
+            # Resolve HLS (.m3u8) URLs to playable MP4 counterparts (especially for Amazon videos)
+            resolved_videos = []
+            for v in videos:
+                if '.hls.m3u8' in v:
+                    resolved_videos.append(v.replace('.hls.m3u8', '.mp4.480.mp4'))
+                elif '.m3u8' in v:
+                    resolved_videos.append(v.replace('.m3u8', '.mp4'))
+                else:
+                    resolved_videos.append(v)
+
+            # Filter and verify videos — keep only real reachable downloadable URLs
+            import concurrent.futures
+            
+            def check_video_url(v_url):
+                try:
+                    headers = {
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+                    }
+                    req_val = urllib.request.Request(v_url, headers=headers, method='HEAD')
+                    with urllib.request.urlopen(req_val, timeout=2.0) as resp:
+                        if resp.status in (200, 206):
+                            return v_url
+                except Exception:
+                    try:
+                        headers = {
+                            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                            'Range': 'bytes=0-100'
+                        }
+                        req_val = urllib.request.Request(v_url, headers=headers, method='GET')
+                        with urllib.request.urlopen(req_val, timeout=2.0) as resp:
+                            if resp.status in (200, 206):
+                                return v_url
+                    except Exception:
+                        pass
+                return None
+
+            filtered_videos = []
+            candidates = [
+                v for v in resolved_videos 
                 if v and not v.startswith('blob:') and v.startswith(('http://', 'https://'))
             ]
-            if filtered_videos:
-                print(f"[Video Filter] {len(videos)} raw → {len(filtered_videos)} downloadable videos")
+            if candidates:
+                print(f"[Video Filter] Verifying {len(candidates)} candidate videos for reachability...")
+                with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+                    results = executor.map(check_video_url, candidates)
+                    for res in results:
+                        if res:
+                            filtered_videos.append(res)
+                print(f"[Video Filter] Kept {len(filtered_videos)} reachable videos out of {len(candidates)}")
+
             
+            # Compute source type and confidence
+            source_type = "unknown"
+            if is_amazon:
+                source_type = "amazon"
+            elif is_app_store:
+                source_type = "app_store"
+            else:
+                source_type = "website"
+            
+            # Simple confidence heuristic based on data completeness
+            confidence = 0.5
+            if title and title != "Unknown Product" and title != "Generic Web Page":
+                confidence += 0.15
+            if (filtered_screenshots or screenshots) and len(filtered_screenshots or screenshots) >= 2:
+                confidence += 0.15
+            if filtered_videos:
+                confidence += 0.1
+            if md_content and len(md_content) > 200:
+                confidence += 0.1
+            confidence = min(1.0, confidence)
+            
+            # Extract reviews if available (from Amazon product parse)
+            reviews_list = []
+            if is_amazon and is_product:
+                reviews_list = parsed_data.get('reviews_list', [])
+
             return {
                 "title": title,
                 "description": description,
@@ -335,6 +465,9 @@ async def scrape_url(req: CrawlRequest):
                 "markdown": md_content,
                 "screenshots": filtered_screenshots or screenshots[:8],
                 "videos": filtered_videos[:10],
+                "sourceType": source_type,
+                "confidence": confidence,
+                "reviews": reviews_list,
             }
             
     except Exception as e:

@@ -1,8 +1,8 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { X, Eye, EyeOff, Settings, CheckCircle2, AlertCircle, ImageIcon } from 'lucide-react';
-import { DEFAULT_AVATAR_URL, KEY_FIELDS, PROMPT_TEMPLATE_PLACEHOLDER, VOICE_OPTIONS } from './settings.constants';
+import { X, Eye, EyeOff, Settings, CheckCircle2, AlertCircle } from 'lucide-react';
+import { KEY_FIELDS, PROMPT_TEMPLATE_PLACEHOLDER } from './settings.constants';
 import { getStoredSetting, savePromptTemplate, saveStoredSetting } from './settings.storage';
 
 interface SettingsModalProps {
@@ -14,8 +14,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
   const [keys, setKeys] = useState<Record<string, string>>({});
   const [showKeys, setShowKeys] = useState<Record<string, boolean>>({});
   const [geminiModel, setGeminiModel] = useState('gemini-2.5-flash');
-  const [avatarImageUrl, setAvatarImageUrl] = useState('');
-  const [voiceOption, setVoiceOption] = useState('en-US-JennyNeural');
+
   const [promptTemplate, setPromptTemplate] = useState('');
   const [saved, setSaved] = useState(false);
   const [serverConfig, setServerConfig] = useState<Record<string, boolean>>({});
@@ -30,8 +29,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
 
     setKeys(loaded);
     setGeminiModel(getStoredSetting('gemini_model', 'gemini-2.5-flash'));
-    setAvatarImageUrl(getStoredSetting('avatar_image_url'));
-    setVoiceOption(getStoredSetting('did_voice_id', 'en-US-JennyNeural'));
+
     setPromptTemplate(getStoredSetting('prompt_template'));
     setSaved(false);
 
@@ -55,9 +53,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
     });
 
     saveStoredSetting('gemini_model', geminiModel);
-    saveStoredSetting('did_voice_id', voiceOption);
     savePromptTemplate(promptTemplate);
-    saveStoredSetting('avatar_image_url', avatarImageUrl);
 
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
@@ -67,7 +63,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
     setShowKeys((previous) => ({ ...previous, [storageKey]: !previous[storageKey] }));
   };
 
-  const selectedVoice = VOICE_OPTIONS.find((voice) => voice.id === voiceOption);
+
 
   if (!isOpen) return null;
 
@@ -197,80 +193,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
             </p>
           </div>
 
-          <div className="border-t border-[var(--border)] pt-4">
-            <h3 className="text-sm font-semibold text-white mb-4 flex items-center gap-2">
-              <ImageIcon className="w-4 h-4 text-[var(--primary)]" />
-              Thiết lập avatar và giọng đọc
-            </h3>
 
-            <div className="mb-4">
-              <label className="block text-sm font-medium text-[var(--foreground)] mb-2">
-                URL ảnh đại diện
-              </label>
-              <input
-                type="text"
-                value={avatarImageUrl}
-                onChange={(event) => setAvatarImageUrl(event.target.value)}
-                placeholder={DEFAULT_AVATAR_URL}
-                className="w-full px-4 py-3 rounded-xl bg-[var(--background)] border border-[var(--border)] text-sm text-white placeholder-[var(--muted)] input-focus-ring transition-all"
-              />
-              <p className="text-xs text-[var(--muted)] mt-1.5">
-                Dán một URL công khai tới ảnh chân dung nhìn thẳng. Nên dùng ảnh rõ nét, sáng và dễ
-                nhận diện.
-              </p>
-              {avatarImageUrl.trim() && (
-                <div className="mt-2 flex items-center gap-3">
-                  <img
-                    src={avatarImageUrl.trim()}
-                    alt="Avatar preview"
-                    className="w-12 h-12 rounded-lg object-cover border border-[var(--border)]"
-                    onError={(event) => {
-                      (event.target as HTMLImageElement).style.display = 'none';
-                    }}
-                  />
-                  <span className="text-xs text-[var(--success)]">Xem trước</span>
-                </div>
-              )}
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-[var(--foreground)] mb-2">
-                Giọng đọc avatar
-              </label>
-              <select
-                value={voiceOption}
-                onChange={(event) => setVoiceOption(event.target.value)}
-                className="w-full px-4 py-3 rounded-xl bg-[var(--background)] border border-[var(--border)] text-sm text-white input-focus-ring transition-all"
-              >
-                <optgroup label="Tiếng Anh (Mỹ)">
-                  {VOICE_OPTIONS.filter((voice) => voice.id.startsWith('en-US')).map((voice) => (
-                    <option key={voice.id} value={voice.id}>
-                      {voice.label}
-                    </option>
-                  ))}
-                </optgroup>
-                <optgroup label="Tiếng Anh (Anh)">
-                  {VOICE_OPTIONS.filter((voice) => voice.id.startsWith('en-GB')).map((voice) => (
-                    <option key={voice.id} value={voice.id}>
-                      {voice.label}
-                    </option>
-                  ))}
-                </optgroup>
-                <optgroup label="Tiếng Việt">
-                  {VOICE_OPTIONS.filter((voice) => voice.id.startsWith('vi-VN')).map((voice) => (
-                    <option key={voice.id} value={voice.id}>
-                      {voice.label}
-                    </option>
-                  ))}
-                </optgroup>
-              </select>
-              <p className="text-xs text-[var(--muted)] mt-1.5">
-                {selectedVoice
-                  ? `Giọng đã chọn: ${selectedVoice.label}.`
-                  : 'Tất cả giọng đều là Microsoft Azure Neural voices.'}
-              </p>
-            </div>
-          </div>
 
           <div className="rounded-xl bg-[var(--primary)]/5 border border-[var(--primary)]/10 p-3">
             <p className="text-xs text-[var(--text-secondary)] leading-relaxed">

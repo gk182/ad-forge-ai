@@ -10,6 +10,14 @@ export interface PipelineStep {
   error?: string;
 }
 
+export interface ProductReview {
+  author: string;
+  rating: string;
+  title: string;
+  date: string;
+  body: string;
+}
+
 export interface ProductData {
   title: string;
   description: string;
@@ -19,6 +27,15 @@ export interface ProductData {
   videos: string[];
   sourceType?: 'amazon' | 'app_store' | 'website' | 'unknown';
   confidence?: number;
+  reviews?: ProductReview[];
+}
+
+export type ScriptMode = 'standard' | 'customer_review' | 'problem_solution' | 'asmr_unboxing';
+
+export interface OrderedAsset {
+  type: 'image' | 'video';
+  url: string;
+  keyframes?: string[]; // base64 captured frames for videos
 }
 
 export interface ScriptScene {

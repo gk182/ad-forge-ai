@@ -14,28 +14,10 @@ export interface VoiceOption {
 
 export const KEY_FIELDS: KeyField[] = [
   {
-    key: 'firecrawl',
-    label: 'Firecrawl API Key',
-    storageKey: 'firecrawl_api_key',
-    placeholder: 'fc-...',
-  },
-  {
     key: 'gemini',
     label: 'Google Gemini API Key',
     storageKey: 'gemini_api_key',
     placeholder: 'AIza...',
-  },
-  {
-    key: 'elevenlabs',
-    label: 'ElevenLabs API Key',
-    storageKey: 'elevenlabs_api_key',
-    placeholder: 'sk_...',
-  },
-  {
-    key: 'did',
-    label: 'D-ID API Key',
-    storageKey: 'did_api_key',
-    placeholder: 'Khóa D-ID của bạn (tùy chọn cho demo)',
   },
 ];
 

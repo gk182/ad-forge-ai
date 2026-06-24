@@ -9,7 +9,7 @@ import { StudioEditor } from './components/StudioEditor';
 import { SettingsModal } from '@/features/settings/SettingsModal';
 import { getApiKeys } from '@/features/settings/settings.storage';
 import type { ScriptTone } from '@/features/settings/URLInput.types';
-import type { ProductData, ScriptBundle } from '@/features/pipeline/pipeline.types';
+import type { ProductData, ScriptBundle, OrderedAsset, ScriptMode } from '@/features/pipeline/pipeline.types';
 import { SITE_NAME, SITE_TAGLINE } from '@/config/site';
 
 type WorkflowStep = 'input' | 'scraping' | 'assets' | 'scripting' | 'studio';
@@ -79,14 +79,22 @@ export function HomeView() {
 
   // Script write trigger
   const handleGenerateScript = async (
-    selectedImages: string[],
-    videoCaptures: string[],
+    orderedAssets: OrderedAsset[],
+    scriptMode: ScriptMode,
     customNotes: string
   ) => {
     if (!productData) return;
     
     const apiKeys = getApiKeys();
     setWorkflowStep('scripting');
+
+    // Extract images and video keyframes from ordered assets
+    const selectedImages = orderedAssets
+      .filter((a) => a.type === 'image')
+      .map((a) => a.url);
+    const videoCaptures = orderedAssets
+      .filter((a) => a.type === 'video')
+      .flatMap((a) => a.keyframes || []);
 
     try {
       const response = await fetch('/api/generate-script-multimodal', {
@@ -99,6 +107,9 @@ export function HomeView() {
           selectedImages,
           videoCaptures,
           productVideos: productData.videos || [],
+          orderedAssets,
+          scriptMode,
+          reviews: productData.reviews || [],
           tone,
           targetDuration: duration,
           geminiApiKey: apiKeys.geminiApiKey,
