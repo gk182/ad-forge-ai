@@ -168,6 +168,13 @@ export function StudioEditor({
     setAudioDuration(undefined);
     setExportUrl('');
     setBuildPhase('idle');
+    setScenes((prev) =>
+      prev.map((scene) => ({
+        ...scene,
+        audioUrl: undefined,
+        audioDuration: undefined,
+      }))
+    );
   };
 
   const loadVariant = (index: number) => {
@@ -306,34 +313,69 @@ export function StudioEditor({
     setAudioUrl('');
     setAudioDuration(undefined);
     setExportUrl('');
-    toast.loading('Generating voice track...', { id: 'build-toast' });
+    toast.loading('Starting per-scene voice generation...', { id: 'build-toast' });
 
-    const fullScript = scenes.map((s) => s.subtitle).join(' ');
     const apiKeys = getApiKeys();
 
-    const res = await fetch('/api/voice', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        script: fullScript,
-        elevenLabsApiKey: apiKeys.elevenLabsApiKey || '',
-        elevenLabsVoiceId: voiceId,
-        useFreeTTS,
-      }),
-    });
+    try {
+      const updatedScenes: Scene[] = [];
+      for (let i = 0; i < scenes.length; i++) {
+        const scene = scenes[i];
+        if (!scene.subtitle || !scene.subtitle.trim()) {
+          updatedScenes.push({
+            ...scene,
+            audioUrl: undefined,
+            audioDuration: undefined,
+          });
+          continue;
+        }
 
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Failed to generate voice');
+        toast.loading(`Generating voice for Scene ${i + 1} of ${scenes.length}...`, { id: 'build-toast' });
 
-    const audioBase64 = data.audioBase64 as string;
-    setAudioUrl(audioBase64);
+        const res = await fetch('/api/voice', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            script: scene.subtitle,
+            elevenLabsApiKey: apiKeys.elevenLabsApiKey || '',
+            elevenLabsVoiceId: voiceId,
+            useFreeTTS,
+          }),
+        });
 
-    const duration = await waitForAudioDuration(audioBase64);
-    setAudioDuration(duration);
-    setBuildPhase('voice-ready');
-    toast.success('Voice track generated successfully.', { id: 'build-toast', icon: '🎙️' });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || `Failed to generate voice for Scene ${i + 1}`);
 
-    return { audioBase64, duration };
+        const audioBase64 = data.audioBase64 as string;
+        const duration = await waitForAudioDuration(audioBase64);
+
+        updatedScenes.push({
+          ...scene,
+          audioUrl: audioBase64,
+          audioDuration: duration,
+        });
+      }
+
+      setScenes(updatedScenes);
+
+      // Total duration is sum of max(scene.duration, scene.audioDuration)
+      const totalDur = updatedScenes.reduce((sum, s) => {
+        const sceneDur = s.audioDuration ? Math.max(s.duration, s.audioDuration) : s.duration;
+        return sum + sceneDur;
+      }, 0);
+
+      setAudioUrl('per-scene');
+      setAudioDuration(totalDur);
+      setBuildPhase('voice-ready');
+      toast.success('Voice tracks generated successfully per scene.', { id: 'build-toast', icon: '🎙️' });
+
+      return { audioBase64: 'per-scene', duration: totalDur };
+    } catch (error: any) {
+      setBuildPhase('error');
+      const msg = error instanceof Error ? error.message : 'Voice generation failed';
+      toast.error(msg, { id: 'build-toast' });
+      throw error;
+    }
   };
 
   const renderVideo = async (audioBase64: string, duration: number) => {
@@ -612,8 +654,7 @@ export function StudioEditor({
           {exportUrl && (
             <div className="space-y-3 pt-2">
               <a
-                href={exportUrl}
-                download
+                href={`/api/download?file=${encodeURIComponent(exportUrl.split('/').pop() || '')}`}
                 className="w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-emerald-500 hover:bg-emerald-600 transition-all text-white font-semibold text-sm shadow-lg shadow-emerald-500/20"
               >
                 <Download className="w-4 h-4" />

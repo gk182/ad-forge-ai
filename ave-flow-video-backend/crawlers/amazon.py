@@ -179,18 +179,18 @@ def parse_amazon_product(html_content, url):
         text = script.string or ''
         if not text:
             continue
-        # Find all .mp4 URLs in any script block
+        # Find all .mp4 or .m3u8 URLs in any script block
         mp4_urls = re.findall(
             r'(?:\"url\"|\"videoUrl\"|\"src\"|\"hlsUrl\"|\"dashUrl\"|\"mp4Url\"|\"fallbackUrl\"|\"lowUrl\"|\"highUrl\")'
-            r'\s*:\s*"(https?://[^"]+\.mp4[^"]*)"',
+            r'\s*:\s*"(https?://[^"]+\.(?:mp4|m3u8)[^"]*)"',
             text
         )
         for u in mp4_urls:
             _add_video(u)
 
-        # Broader pattern: any HTTPS .mp4 URL in scripts
+        # Broader pattern: any HTTPS .mp4 or .m3u8 URL in scripts
         broad_mp4 = re.findall(
-            r'(https?://[a-zA-Z0-9._/~:@!$&\'()*+,;=%-]+\.mp4(?:/[a-zA-Z0-9._/%-]*)?)',
+            r'(https?://[a-zA-Z0-9._/~:@!$&\'()*+,;=%-]+\.(?:mp4|m3u8)(?:/[a-zA-Z0-9._/%-]*)?)',
             text
         )
         for u in broad_mp4:
@@ -201,7 +201,7 @@ def parse_amazon_product(html_content, url):
         _add_video(elem['data-video-url'])
     for elem in soup.find_all(attrs={'data-src': True}):
         src = elem['data-src']
-        if '.mp4' in src:
+        if '.mp4' in src or '.m3u8' in src:
             _add_video(src)
 
     # ── Source 3: <video> and <source> tags ──
@@ -223,11 +223,11 @@ def parse_amazon_product(html_content, url):
                 if isinstance(item, dict):
                     for key in ('video', 'contentUrl', 'embedUrl', 'thumbnailUrl'):
                         val = item.get(key)
-                        if isinstance(val, str) and '.mp4' in val:
+                        if isinstance(val, str) and ('.mp4' in val or '.m3u8' in val):
                             _add_video(val)
                         elif isinstance(val, list):
                             for v in val:
-                                if isinstance(v, str) and '.mp4' in v:
+                                if isinstance(v, str) and ('.mp4' in v or '.m3u8' in v):
                                     _add_video(v)
                                 elif isinstance(v, dict):
                                     _add_video(v.get('contentUrl', ''))
@@ -237,13 +237,13 @@ def parse_amazon_product(html_content, url):
 
     # ── Source 5: Elements with class/id containing "video" ──
     video_containers = soup.select(
-        '[id*="video" i] a[href*=".mp4"], '
-        '[class*="video" i] a[href*=".mp4"], '
+        '[id*="video" i] a[href*=".mp4"], [id*="video" i] a[href*=".m3u8"], '
+        '[class*="video" i] a[href*=".mp4"], [class*="video" i] a[href*=".m3u8"], '
         '[data-csa-c-type="widget"][data-csa-c-slot-id*="video" i]'
     )
     for elem in video_containers:
         href = elem.get('href', '')
-        if '.mp4' in href:
+        if '.mp4' in href or '.m3u8' in href:
             _add_video(href)
 
     # ── Source 6: Alt-images section video thumbnails → try to resolve ──
@@ -252,7 +252,7 @@ def parse_amazon_product(html_content, url):
     for thumb in alt_video_thumbs:
         # Check for any data attribute containing a video URL
         for attr_name, attr_val in thumb.attrs.items():
-            if isinstance(attr_val, str) and '.mp4' in attr_val:
+            if isinstance(attr_val, str) and ('.mp4' in attr_val or '.m3u8' in attr_val):
                 _add_video(attr_val)
 
     data['videos'] = videos

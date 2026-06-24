@@ -287,6 +287,9 @@ export async function POST(req: NextRequest) {
       selectedImages, // array of image URLs
       videoCaptures,  // array of base64 keyframe captures
       productVideos,  // array of crawled video URLs
+      orderedAssets = [], // ordered assets with type, url, keyframes
+      scriptMode = 'standard', // 'standard' | 'customer_review' | 'problem_solution' | 'asmr_unboxing'
+      reviews = [], // array of customer reviews
       tone,
       targetDuration,
       geminiApiKey: reqGeminiApiKey,
@@ -367,7 +370,7 @@ Each scene represents a video slice and must include:
 - "media_type": "image" or "video"
 - "media_url": the URL of the image or video from the selected assets
 - "duration": planned scene duration in seconds
-- "subtitle": the spoken text overlay for this scene
+- "subtitle": the spoken text overlay for this scene. IMPORTANT: Write detailed and descriptive sentences for the subtitle that will take the same amount of time to read aloud as the scene's duration (about 2.5 to 3.5 words per second). For example, if a scene's duration is 4 seconds, the subtitle should be around 10-14 words long so that the voiceover fills the scene without leaving silent gaps.
 - "motion": for images, one of "center_zoom", "slow_zoom_out", "pan_left", "pan_right", "drift_up", "drift_down", "ken_burns_tl", "ken_burns_br"; for videos, always "static"
 
 Keep the variants meaningfully different in hook, pacing, or closing angle. Return JSON only.`;
@@ -389,6 +392,32 @@ Keep the variants meaningfully different in hook, pacing, or closing angle. Retu
         `${idx + 1}. ${variant.label}: ${variant.instruction}`
     ).join('\n');
 
+    // Build script mode-specific instructions
+    let scriptModeInstruction = '';
+    switch (scriptMode) {
+      case 'customer_review':
+        scriptModeInstruction = `\n\nSCRIPT MODE: CUSTOMER REVIEW\nWrite the script as a first-person testimonial from a real customer.\nUse conversational, authentic language as if recording a genuine product review.\nReference specific product features the customer loves.\n${reviews && reviews.length > 0 ? `Real customer reviews to incorporate:\n${reviews.slice(0, 5).map((r: any, i: number) => `${i + 1}. "${r.body}" — ${r.author} (${r.rating}★)`).join('\n')}` : ''}`;
+        break;
+      case 'problem_solution':
+        scriptModeInstruction = '\n\nSCRIPT MODE: PROBLEM → SOLUTION\nStart by presenting a relatable pain point or frustration.\nBuild tension for the first 30-40% of the script.\nThen reveal the product as the perfect solution.\nEnd with proof of results and a strong CTA.';
+        break;
+      case 'asmr_unboxing':
+        scriptModeInstruction = '\n\nSCRIPT MODE: ASMR / UNBOXING\nUse calm, sensory-focused language.\nDescribe textures, sounds, and the unboxing experience.\nPace should be slower and more deliberate.\nFocus on visual details and tactile sensations.\nUse ellipses and soft transitions.';
+        break;
+      default:
+        scriptModeInstruction = '\n\nSCRIPT MODE: STANDARD PROMO\nHigh-energy ad with attention-grabbing hook, clear benefits, and strong CTA.';
+    }
+
+    // Build ordered assets instruction if available
+    const hasOrderedAssets = Array.isArray(orderedAssets) && orderedAssets.length > 0;
+    let orderedAssetsInstruction = '';
+    if (hasOrderedAssets) {
+      const assetList = orderedAssets.map((a: any, i: number) => 
+        `Scene ${i + 1}: ${a.type === 'video' ? 'VIDEO' : 'IMAGE'} → ${a.type === 'video' ? a.url : (a.url.startsWith('data:') ? `uploaded_image_${i}` : a.url)}`
+      ).join('\n');
+      orderedAssetsInstruction = `\n\nIMPORTANT — SCENE ORDER (MANDATORY):\nThe user has selected assets in a specific order. You MUST generate exactly ${orderedAssets.length} scenes, one per selected asset, in this exact order:\n${assetList}\nEach scene\'s media_url and media_type MUST match the corresponding asset above. Do NOT reorder, skip, or add extra scenes.`;
+    }
+
     const userPrompt = `Create exactly 3 distinct video script variants for:
 Title: ${title}
 Description: ${description}
@@ -397,6 +426,8 @@ Product Details: ${markdown}
 Tone: ${tone}
 Target Duration: ${targetDuration} seconds
 Custom Instructions: ${customNotes || 'None'}
+${scriptModeInstruction}
+${orderedAssetsInstruction}
 
 Variant directions:
 ${variantDescriptions}
@@ -409,7 +440,7 @@ Rules:
 - Return a top-level object with a "variants" array of length 3.
 - Each variant must have: variant_id, creative_angle, script_text, elevenlabs_voice_id, scenes, rationale, score, coverageNotes.
 - Each variant must be meaningfully different in hook, pacing, or closing angle.
-- Each scene must have short subtitle text, a realistic duration, and a media_url from the provided assets.
+- Each scene must have detailed and descriptive subtitle text that matches its duration (approx. 2.5 to 3.5 words per second of duration to prevent silent gaps when spoken), a realistic duration, and a media_url from the provided assets.
 - For video scenes, use motion "static".
 - Keep the total scene duration close to the target duration.
 - Keep the script natural, TikTok-friendly, and product-specific.`;

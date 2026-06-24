@@ -82,7 +82,7 @@ export function VideoPreview({ result }: VideoPreviewProps) {
     const video = videoRef.current;
     if (video) {
       video.currentTime = 0;
-      video.play().catch(() => {});
+      video.play().catch(() => { });
     }
     setIsPlaying(true);
   };
@@ -103,11 +103,11 @@ export function VideoPreview({ result }: VideoPreviewProps) {
     try {
       const filename = result.videoUrl.split('/').pop();
       if (!filename) throw new Error('Invalid video URL');
-      
+
       toast.loading('Preparing download...', { id: 'download' });
       const res = await fetch(`/api/download?file=${encodeURIComponent(filename)}`);
       if (!res.ok) throw new Error('Download failed');
-      
+
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -137,7 +137,7 @@ export function VideoPreview({ result }: VideoPreviewProps) {
       )}
 
       <div className="flex flex-col lg:flex-row gap-6 items-start">
-        <div className="relative mx-auto w-[320px] aspect-[9/16] rounded-3xl overflow-hidden bg-black shadow-2xl shadow-[var(--primary)]/10 border border-[var(--border)]">
+        <div className="relative mx-auto w-full max-w-[360px] md:max-w-[400px] shrink-0 aspect-[9/16] rounded-3xl overflow-hidden bg-black shadow-2xl shadow-[var(--primary)]/10 border border-[var(--border)]">
 
           {/* Splitscreen Product Card */}
           {layout === 'splitscreen' && result.productData.image && (
@@ -175,13 +175,12 @@ export function VideoPreview({ result }: VideoPreviewProps) {
           <video
             ref={videoRef}
             src={result.videoUrl}
-            className={`transition-all duration-300 ${
-              layout === 'greenscreen'
-                ? 'absolute inset-0 w-full h-full object-cover z-0'
-                : layout === 'splitscreen'
+            className={`transition-all duration-300 ${layout === 'greenscreen'
+              ? 'absolute inset-0 w-full h-full object-cover z-0'
+              : layout === 'splitscreen'
                 ? 'absolute bottom-0 left-0 right-0 h-[50%] w-full object-cover border-t border-white/10 z-0'
                 : 'absolute bottom-24 right-3 w-[90px] h-[90px] rounded-2xl border-2 border-white/20 shadow-lg object-cover z-10'
-            }`}
+              }`}
             loop
             playsInline
             onTimeUpdate={handleTimeUpdate}
@@ -195,9 +194,8 @@ export function VideoPreview({ result }: VideoPreviewProps) {
             className="absolute inset-0 z-20 flex items-center justify-center group"
           >
             <div
-              className={`w-14 h-14 rounded-full bg-white/10 backdrop-blur-md flex items-center justify-center transition-all duration-300 ${
-                isPlaying ? 'opacity-0 group-hover:opacity-100' : 'opacity-100'
-              }`}
+              className={`w-14 h-14 rounded-full bg-white/10 backdrop-blur-md flex items-center justify-center transition-all duration-300 ${isPlaying ? 'opacity-0 group-hover:opacity-100' : 'opacity-100'
+                }`}
             >
               {isPlaying ? (
                 <Pause className="w-6 h-6 text-white" />
@@ -231,11 +229,10 @@ export function VideoPreview({ result }: VideoPreviewProps) {
                   onClick={() => {
                     setLayout(item.id as PreviewLayout);
                   }}
-                  className={`flex flex-col items-center gap-2 p-3 rounded-xl border text-center transition-all duration-300 ${
-                    layout === item.id
-                      ? 'bg-[var(--primary)]/10 border-[var(--primary)] text-white'
-                      : 'bg-white/5 border-[var(--border)] text-[var(--text-secondary)] hover:bg-white/10'
-                  }`}
+                  className={`flex flex-col items-center gap-2 p-3 rounded-xl border text-center transition-all duration-300 ${layout === item.id
+                    ? 'bg-[var(--primary)]/10 border-[var(--primary)] text-white'
+                    : 'bg-white/5 border-[var(--border)] text-[var(--text-secondary)] hover:bg-white/10'
+                    }`}
                 >
                   {item.icon}
                   <div className="flex flex-col">
