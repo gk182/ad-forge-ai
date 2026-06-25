@@ -1,5 +1,7 @@
 import { Composition } from 'remotion';
 import { AdVideo, AdVideoProps } from './AdVideo';
+import { MobileAppComposition } from './mobile-app/MobileAppComposition';
+import { MobileAppVideoProps } from './mobile-app/types';
 
 export const Root: React.FC = () => {
   const defaultProps: AdVideoProps = {
@@ -35,6 +37,42 @@ export const Root: React.FC = () => {
     ],
   };
 
+  const defaultMobileAppProps: MobileAppVideoProps = {
+    appName: 'FoodFlow App',
+    tagline: 'Order your favorite meal in 1-tap',
+    primaryColor: '#10b981', // Emerald-500
+    secondaryColor: '#3b82f6', // Blue-500
+    scenes: [
+      {
+        imageUrl: 'https://images.unsplash.com/photo-1512941937669-90a1b58e7e9c?auto=format&fit=crop&w=600&q=80',
+        duration: 5,
+        subtitle: 'Hungry? Browse from thousands of local restaurants instantly.',
+        featureLabel: 'Browse',
+        featureDescription: 'Explore the best restaurants around you.',
+        animation: 'spring_scale',
+        transition: 'fade',
+      },
+      {
+        imageUrl: 'https://images.unsplash.com/photo-1551650975-87deedd944c3?auto=format&fit=crop&w=600&q=80',
+        duration: 5,
+        subtitle: 'Customize your dishes exactly the way you like them.',
+        featureLabel: 'Customize',
+        featureDescription: 'Tailor your order to your exact cravings.',
+        animation: 'highlight_pulse',
+        transition: 'slide_left',
+      },
+      {
+        imageUrl: 'https://images.unsplash.com/photo-1542496658-e33a6d0d50f6?auto=format&fit=crop&w=600&q=80',
+        duration: 5,
+        subtitle: 'Get real-time tracking from kitchen to your front door.',
+        featureLabel: 'Track Live',
+        featureDescription: 'Watch your delivery in real-time.',
+        animation: 'spring_scale',
+        transition: 'zoom_in',
+      },
+    ],
+  };
+
   return (
     <>
       <Composition
@@ -46,6 +84,16 @@ export const Root: React.FC = () => {
         height={1920}
         defaultProps={defaultProps}
       />
+      <Composition
+        id="MobileAppVideo"
+        component={MobileAppComposition}
+        durationInFrames={450} // 15 seconds at 30 fps
+        fps={30}
+        width={1080}
+        height={1920}
+        defaultProps={defaultMobileAppProps}
+      />
     </>
   );
 };
+

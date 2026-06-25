@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { Settings, Film, Sparkles, ArrowLeft } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { URLInput } from './components/URLInput';
+import { MobileAppInput } from './components/MobileAppInput';
 import { AssetSelector } from './components/AssetSelector';
 import { StudioEditor } from './components/StudioEditor';
 import { SettingsModal } from '@/features/settings/SettingsModal';
@@ -17,6 +18,7 @@ type WorkflowStep = 'input' | 'scraping' | 'assets' | 'scripting' | 'studio';
 export function HomeView() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [workflowStep, setWorkflowStep] = useState<WorkflowStep>('input');
+  const [videoType, setVideoType] = useState<'product' | 'mobile_app'>('product');
   
   // Pipeline settings saved from URLInput
   const [tone, setTone] = useState<ScriptTone>('fun');
@@ -75,6 +77,136 @@ export function HomeView() {
       toast.success('Product details crawled! Now choose your media assets.', { icon: '🔍' });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Scraping failed';
+      toast.error(message, { duration: 6000 });
+      setWorkflowStep('input');
+    }
+  };
+
+  const handleGenerateMobileAppVideo = async (
+    url: string,
+    selectedTone: ScriptTone,
+    options: { duration: number; voiceId: string; useFreeTTS: boolean; images: string[] }
+  ) => {
+    const apiKeys = getApiKeys();
+    const hasGemini = apiKeys.geminiApiKey || serverConfig?.hasGeminiApiKey;
+
+    if (!hasGemini) {
+      toast.error('Please add your Gemini API key in Settings or set it in the server environment.', { duration: 5000 });
+      setSettingsOpen(true);
+      return;
+    }
+
+    if (options.images.length === 0) {
+      toast.error('Please upload at least one screenshot to generate a mobile app video ad.');
+      return;
+    }
+
+    setTone(selectedTone);
+    setDuration(options.duration);
+    setProductData(null);
+    setScriptData(null);
+    
+    let crawledProductData: ProductData | null = null;
+    if (url.trim()) {
+      setWorkflowStep('scraping');
+      try {
+        const response = await fetch('/api/scrape', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url }),
+        });
+        const data = await response.json();
+        if (response.ok) {
+          crawledProductData = data;
+        }
+      } catch (err) {
+        console.warn('Crawling failed, proceeding with raw URL/screenshots only:', err);
+      }
+    }
+
+    setScriptingTitle('Analyzing Screenshots & Writing Script');
+    setScriptingText('Gemini is inspecting the uploaded mobile screenshots and crawled page data to craft an amazing mobile app ad script.');
+    setWorkflowStep('scripting');
+
+    try {
+      const response = await fetch('/api/generate-app-video-script', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          appName: crawledProductData?.title || '',
+          url: url.trim(),
+          crawlData: crawledProductData?.description || crawledProductData?.markdown || '',
+          selectedImages: options.images,
+          tone: selectedTone,
+          targetDuration: options.duration,
+          customNotes: '',
+          geminiApiKey: apiKeys.geminiApiKey,
+          geminiModel: apiKeys.geminiModel || 'gemini-2.5-flash',
+        }),
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to generate app script');
+      }
+
+      setScriptingTitle('Generating AI Voiceover (Kokoro TTS)');
+      setScriptingText('Synthesizing voiceover audio track for the video ad. Almost ready...');
+
+      const fullScript = data.scenes.map((s: any) => s.subtitle).join(' ');
+      const sceneSubtitles = data.scenes.map((s: any) => s.subtitle);
+
+      const voiceRes = await fetch('/api/voice', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          script: fullScript,
+          sceneSubtitles,
+          kokoroVoiceId: 'af_heart', // Default voice
+        }),
+      });
+
+      const voiceData = await voiceRes.json();
+      if (!voiceRes.ok) {
+        throw new Error(voiceData.error || 'Failed to generate voice track');
+      }
+
+      if (Array.isArray(voiceData.sceneAlignments)) {
+        data.scenes = data.scenes.map((scene: any, idx: number) => {
+          const alignment = voiceData.sceneAlignments.find((item: any) => item.sceneIndex === idx);
+          return alignment ? {
+            ...scene,
+            duration: alignment.duration || scene.duration,
+            word_timings: alignment.wordTimings,
+          } : scene;
+        });
+      }
+
+      const finalScriptData = {
+        selectedVariant: data,
+        variants: [data],
+        selectedVariantIndex: 0,
+        initialAudioUrl: voiceData.audioBase64,
+        initialAudioDuration: voiceData.audioDuration,
+      };
+
+      const mockProductData: ProductData = {
+        title: data.appName,
+        description: data.tagline,
+        image: crawledProductData?.image || options.images[0] || '',
+        screenshots: options.images,
+        videos: [],
+        reviews: [],
+        sourceType: crawledProductData?.sourceType || 'unknown',
+        confidence: 1.0,
+      };
+
+      setProductData(mockProductData);
+      setScriptData(finalScriptData);
+      setWorkflowStep('studio');
+      toast.success('Mobile app video generated successfully!', { icon: '✨' });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'App video generation failed';
       toast.error(message, { duration: 6000 });
       setWorkflowStep('input');
     }
@@ -242,8 +374,41 @@ export function HomeView() {
               </p>
             </section>
 
+            {/* Mode Switcher Tabs */}
+            <div className="flex justify-center max-w-xs mx-auto p-1 bg-white/5 border border-white/10 rounded-2xl animate-slide-up delay-300">
+              <button
+                type="button"
+                onClick={() => setVideoType('product')}
+                className={`flex-1 py-2 text-xs font-bold rounded-xl flex items-center justify-center gap-1.5 transition-all ${
+                  videoType === 'product'
+                    ? 'bg-zinc-850 text-white shadow-sm border border-zinc-700'
+                    : 'text-[var(--muted)] hover:text-white'
+                }`}
+              >
+                Product Ad
+              </button>
+              <button
+                type="button"
+                onClick={() => setVideoType('mobile_app')}
+                className={`flex-1 py-2 text-xs font-bold rounded-xl flex items-center justify-center gap-1.5 transition-all ${
+                  videoType === 'mobile_app'
+                    ? 'bg-zinc-850 text-white shadow-sm border border-zinc-700'
+                    : 'text-[var(--muted)] hover:text-white'
+                }`}
+              >
+                Mobile App
+              </button>
+            </div>
+
             <section className="animate-slide-up delay-400">
-              <URLInput onGenerate={handleScrape} isLoading={false} />
+              {videoType === 'mobile_app' ? (
+                <MobileAppInput
+                  onGenerate={handleGenerateMobileAppVideo}
+                  isLoading={false}
+                />
+              ) : (
+                <URLInput onGenerate={handleScrape} isLoading={false} />
+              )}
             </section>
           </div>
         )}
@@ -256,7 +421,7 @@ export function HomeView() {
               <Film className="w-8 h-8 text-[var(--primary)] absolute top-6 left-6 animate-pulse" />
             </div>
             <div className="space-y-2">
-              <h3 className="text-xl font-bold text-white">Scraping Product Information</h3>
+              <h3 className="text-xl font-bold text-white">Scraping Product/App Information</h3>
               <p className="text-sm text-[var(--text-secondary)] leading-relaxed">
                 Reading description, downloading high-resolution media galleries, and extracting videos from the product link. Please wait...
               </p>
@@ -292,7 +457,7 @@ export function HomeView() {
         {/* State 5: Remotion Studio Editor */}
         {workflowStep === 'studio' && scriptData && productData && (
           <StudioEditor
-            key={`${scriptData.selectedVariant.variant_id}-${scriptData.selectedVariantIndex}`}
+            key={`${scriptData.selectedVariant.variant_id || 'mobile'}-${scriptData.selectedVariantIndex}`}
             selectedVariant={scriptData.selectedVariant}
             variants={scriptData.variants}
             productImages={[productData.image, ...(productData.screenshots || [])].filter(Boolean)}
@@ -301,6 +466,8 @@ export function HomeView() {
             confidence={productData.confidence}
             initialAudioUrl={scriptData.initialAudioUrl}
             initialAudioDuration={scriptData.initialAudioDuration}
+            videoType={videoType}
+            logoUrl={productData.sourceType === 'app_store' ? productData.image : undefined}
           />
         )}
 
