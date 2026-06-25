@@ -31,7 +31,8 @@ interface StudioEditorProps {
   productVideos: string[];
   sourceType?: 'amazon' | 'app_store' | 'website' | 'unknown';
   confidence?: number;
-  autoBuild?: boolean;
+  initialAudioUrl?: string;
+  initialAudioDuration?: number;
 }
 
 const GOOGLE_FONTS = [
@@ -126,6 +127,15 @@ function buildScenesFromVariant(
   });
 }
 
+const KOKORO_VOICES = [
+  { value: 'af_heart', label: 'Heart (Female)' },
+  { value: 'af_bella', label: 'Bella (Female)' },
+  { value: 'af_nicole', label: 'Nicole (Female)' },
+  { value: 'af_sarah', label: 'Sarah (Female)' },
+  { value: 'am_adam', label: 'Adam (Male)' },
+  { value: 'am_michael', label: 'Michael (Male)' },
+];
+
 export function StudioEditor({
   selectedVariant,
   variants,
@@ -133,10 +143,10 @@ export function StudioEditor({
   productVideos,
   sourceType,
   confidence,
-  autoBuild = false,
+  initialAudioUrl,
+  initialAudioDuration,
 }: StudioEditorProps) {
   const playerRef = useRef<PlayerRef>(null);
-  const autoBuildStartedRef = useRef(false);
   const buildLockRef = useRef(false);
   const variantOptions = variants.length > 0 ? variants : [selectedVariant];
 
@@ -153,14 +163,35 @@ export function StudioEditor({
   const [subtitleStyle, setSubtitleStyle] = useState<'bounce' | 'glow' | 'slide_up' | 'rotate' | 'fade'>('bounce');
 
   // Audio / voiceover state
-  const [audioUrl, setAudioUrl] = useState('');
-  const [audioDuration, setAudioDuration] = useState<number | undefined>(undefined);
-  const [useFreeTTS, setUseFreeTTS] = useState(true);
-  const [voiceId, setVoiceId] = useState(selectedVariant.elevenlabs_voice_id || 'JBFqnCBsd6RMkjVDRZzb');
+  const [audioUrl, setAudioUrl] = useState(initialAudioUrl || '');
+  const [audioDuration, setAudioDuration] = useState<number | undefined>(initialAudioDuration);
+  const [kokoroVoiceId, setKokoroVoiceId] = useState('af_heart');
+
+  // Audio cache state
+  const [cachedAudio, setCachedAudio] = useState<
+    Record<
+      number,
+      {
+        audioUrl: string;
+        audioDuration: number;
+        scenes: Scene[];
+      }
+    >
+  >(() => {
+    const initialCache: Record<number, { audioUrl: string; audioDuration: number; scenes: Scene[] }> = {};
+    if (initialAudioUrl && initialAudioDuration) {
+      initialCache[0] = {
+        audioUrl: initialAudioUrl,
+        audioDuration: initialAudioDuration,
+        scenes: buildScenesFromVariant(variantOptions[0] || selectedVariant, productImages, productVideos),
+      };
+    }
+    return initialCache;
+  });
 
   // Export state
   const [exportUrl, setExportUrl] = useState('');
-  const [buildPhase, setBuildPhase] = useState<BuildPhase>('idle');
+  const [buildPhase, setBuildPhase] = useState<BuildPhase>(initialAudioUrl ? 'voice-ready' : 'idle');
 
   // active scene being edited
   const [activeSceneIndex, setActiveSceneIndex] = useState(0);
@@ -198,19 +229,34 @@ export function StudioEditor({
         audioDuration: undefined,
       }))
     );
+    setCachedAudio((prev) => {
+      const copy = { ...prev };
+      delete copy[activeVariantIndex];
+      return copy;
+    });
   };
 
-  const loadVariant = (index: number) => {
+  const loadVariant = async (index: number) => {
     const nextVariant = variantOptions[index] || variantOptions[0] || selectedVariant;
     setActiveVariantIndex(index);
-    setScenes(buildScenesFromVariant(nextVariant, productImages, productVideos));
-    setVoiceId(nextVariant.elevenlabs_voice_id || 'JBFqnCBsd6RMkjVDRZzb');
-    setAudioUrl('');
-    setAudioDuration(undefined);
-    setExportUrl('');
-    setBuildPhase('idle');
     setActiveSceneIndex(0);
+    setExportUrl('');
     toast.success(`Loaded ${nextVariant.creative_angle}`, { icon: '🧩' });
+
+    if (cachedAudio[index]) {
+      const cached = cachedAudio[index];
+      setScenes(cached.scenes);
+      setAudioUrl(cached.audioUrl);
+      setAudioDuration(cached.audioDuration);
+      setBuildPhase('voice-ready');
+    } else {
+      const nextScenes = buildScenesFromVariant(nextVariant, productImages, productVideos);
+      setScenes(nextScenes);
+      setAudioUrl('');
+      setAudioDuration(undefined);
+      setBuildPhase('idle');
+      await generateVoiceTrackForScenes(nextScenes, index);
+    }
   };
 
   const waitForAudioDuration = (audioSrc: string, timeoutMs = 10000): Promise<number> => {
@@ -331,15 +377,15 @@ export function StudioEditor({
     toast.success('Scene durations synchronized with subtitle word lengths!');
   };
 
-  const generateVoiceTrack = async () => {
+  const generateVoiceTrackForScenes = async (targetScenes: Scene[], targetVariantIndex?: number) => {
+    const cacheIndex = targetVariantIndex !== undefined ? targetVariantIndex : activeVariantIndex;
     setBuildPhase('generating-voice');
     setAudioUrl('');
     setAudioDuration(undefined);
     setExportUrl('');
-    toast.loading('Starting per-scene voice generation...', { id: 'build-toast' });
+    toast.loading('Synthesizing voiceover (Kokoro TTS)...', { id: 'build-toast' });
 
-    const apiKeys = getApiKeys();
-    const fullScript = scenes.map((s) => s.subtitle).join(' ');
+    const fullScript = targetScenes.map((s) => s.subtitle).join(' ');
 
     try {
       const res = await fetch('/api/voice', {
@@ -347,10 +393,8 @@ export function StudioEditor({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           script: fullScript,
-          sceneSubtitles: scenes.map((scene) => scene.subtitle),
-          elevenLabsApiKey: apiKeys.elevenLabsApiKey || '',
-          elevenLabsVoiceId: voiceId,
-          useFreeTTS,
+          sceneSubtitles: targetScenes.map((scene) => scene.subtitle),
+          kokoroVoiceId,
         }),
       });
 
@@ -360,29 +404,40 @@ export function StudioEditor({
       const audioBase64 = data.audioBase64;
       setAudioUrl(audioBase64);
 
-      if (Array.isArray(data.sceneAlignments) && data.sceneAlignments.length === scenes.length) {
-        setScenes((prev) =>
-          prev.map((scene, index) => {
-            const alignment = data.sceneAlignments?.find((item) => item.sceneIndex === index);
-            if (!alignment) {
-              return stripSceneAlignment(scene);
-            }
-            return {
-              ...scene,
-              duration: alignment.duration || scene.duration,
-              word_timings: alignment.wordTimings,
-            };
-          })
-        );
+      let finalScenes = targetScenes;
+      if (Array.isArray(data.sceneAlignments) && data.sceneAlignments.length === targetScenes.length) {
+        finalScenes = targetScenes.map((scene, index) => {
+          const alignment = data.sceneAlignments?.find((item) => item.sceneIndex === index);
+          if (!alignment) {
+            return stripSceneAlignment(scene);
+          }
+          return {
+            ...scene,
+            duration: alignment.duration || scene.duration,
+            word_timings: alignment.wordTimings,
+          };
+        });
       } else {
-        setScenes((prev) => prev.map(stripSceneAlignment));
+        finalScenes = targetScenes.map(stripSceneAlignment);
       }
+      setScenes(finalScenes);
 
       const duration = data.audioDuration && data.audioDuration > 0
         ? data.audioDuration
         : await waitForAudioDuration(audioBase64);
       setAudioDuration(duration);
       setBuildPhase('voice-ready');
+
+      // Save to cache
+      setCachedAudio((prev) => ({
+        ...prev,
+        [cacheIndex]: {
+          audioUrl: audioBase64,
+          audioDuration: duration,
+          scenes: finalScenes,
+        },
+      }));
+
       const toastMessage =
         data.alignmentSource === 'gentle'
           ? 'Voice track generated with Gentle alignment.'
@@ -397,6 +452,8 @@ export function StudioEditor({
       throw error;
     }
   };
+
+  const generateVoiceTrack = () => generateVoiceTrackForScenes(scenes);
 
   const renderVideo = async (audioBase64: string, duration: number) => {
     setBuildPhase('rendering');
@@ -455,10 +512,6 @@ export function StudioEditor({
     buildLockRef.current = true;
 
     try {
-      if (!useFreeTTS && !getApiKeys().elevenLabsApiKey) {
-        throw new Error('ElevenLabs API key is required or enable Free TTS.');
-      }
-
       await generateVoiceTrack();
     } catch (e: any) {
       const message = e instanceof Error ? e.message : 'Voice generation failed';
@@ -477,12 +530,11 @@ export function StudioEditor({
   };
 
   useEffect(() => {
-    if (!autoBuild || autoBuildStartedRef.current) return;
-    autoBuildStartedRef.current = true;
-    void generateVoiceOnly();
-    // Auto-run only once on the first studio mount for the generated script.
+    if (audioUrl) {
+      void generateVoiceOnly();
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoBuild]);
+  }, [kokoroVoiceId]);
 
   // Sync player seek to scene start frame
   const seekToScene = (index: number) => {
@@ -500,237 +552,206 @@ export function StudioEditor({
   };
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 max-w-7xl mx-auto pb-20 animate-fade-in">
+    <div className="max-w-7xl mx-auto pb-20 space-y-8 animate-fade-in">
+      {/* Script Variants Tab Bar */}
+      <div className="glass-card p-3 bg-black/40 border border-[var(--border)]/50 rounded-2xl flex flex-wrap gap-2 justify-center shadow-lg">
+        {variantOptions.map((variant, index) => {
+          const isActive = index === activeVariantIndex;
+          return (
+            <button
+              key={variant.variant_id}
+              type="button"
+              onClick={() => void loadVariant(index)}
+              disabled={isBuilding}
+              className={`px-5 py-2.5 rounded-xl text-xs font-semibold tracking-wide transition-all uppercase flex items-center gap-2 ${
+                isActive
+                  ? 'bg-gradient-to-r from-[var(--primary)] to-[var(--secondary)] text-white shadow-md shadow-[var(--primary)]/15 border-transparent'
+                  : 'bg-white/5 border border-[var(--border)] text-zinc-400 hover:text-white hover:bg-white/10 hover:border-zinc-500 disabled:opacity-50'
+              }`}
+            >
+              <Sparkles className={`w-3.5 h-3.5 ${isActive ? 'text-white' : 'text-[var(--primary)]'}`} />
+              {variant.creative_angle}
+            </button>
+          );
+        })}
+      </div>
 
-      {/* LEFT: Video Player and Export Actions (Sticky container) */}
-      <div className="lg:col-span-5 space-y-6 lg:sticky lg:top-24 h-fit">
-        <div className="glass-card overflow-hidden flex flex-col items-center bg-black/40 border border-[var(--border)]/60 rounded-3xl p-6 shadow-2xl">
-          <div className="w-full max-w-[280px] sm:max-w-[320px] aspect-[9/16] rounded-2xl overflow-hidden border border-white/10 shadow-inner bg-zinc-950 relative">
-            <Player
-              ref={playerRef}
-              component={AdVideo}
-              inputProps={{
-                title,
-                scenes,
-                audioUrl,
-                audioDuration,
-                textColor,
-                highlightColor,
-                fontFamily,
-                layoutType,
-                subtitleStyle,
-              }}
-              durationInFrames={durationInFrames}
-              fps={30}
-              compositionWidth={1080}
-              compositionHeight={1920}
-              style={{
-                width: '100%',
-                height: '100%',
-              }}
-              controls
-            />
-          </div>
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
 
-          <div className="w-full mt-6 text-center text-xs text-[var(--muted)]">
-            <span>Video Resolution: 1080x1920 (TikTok format)</span>
-            <span className="mx-2">•</span>
-            <span>Duration: {activeDuration.toFixed(1)}s</span>
-          </div>
-        </div>
-
-        <div className="glass-card p-5 space-y-3">
-          <div className="flex items-center justify-between gap-3">
-            <h4 className="font-bold text-white flex items-center gap-2 text-sm">
-              <Sparkles className="w-4 h-4 text-[var(--secondary)]" />
-              Selected Script Variant
-            </h4>
-            <span className="text-[10px] uppercase tracking-wider text-[var(--muted)]">
-              {variantOptions.length} variants
-            </span>
-          </div>
-          <div className="flex flex-wrap gap-2 text-[10px]">
-            <span className="px-2 py-1 rounded-full bg-white/5 border border-[var(--border)] text-[var(--text-secondary)]">
-              Angle: {activeVariant.creative_angle}
-            </span>
-            <span className="px-2 py-1 rounded-full bg-white/5 border border-[var(--border)] text-[var(--text-secondary)]">
-              Score: {activeVariant.score}/100
-            </span>
-            <span className="px-2 py-1 rounded-full bg-white/5 border border-[var(--border)] text-[var(--text-secondary)]">
-              Source: {sourceLabel}
-            </span>
-            <span className="px-2 py-1 rounded-full bg-white/5 border border-[var(--border)] text-[var(--text-secondary)]">
-              Confidence: {confidenceLabel}
-            </span>
-          </div>
-          <p className="text-xs text-[var(--muted)] leading-relaxed">
-            {activeVariant.rationale}
-          </p>
-          {activeVariant.coverageNotes?.length > 0 && (
-            <div className="flex flex-wrap gap-2">
-              {activeVariant.coverageNotes.map((note) => (
-                <span
-                  key={note}
-                  className="px-2.5 py-1 rounded-full bg-[var(--primary)]/10 border border-[var(--primary)]/20 text-[11px] text-[var(--primary)]"
-                >
-                  {note}
-                </span>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* Voiceover and Render Control Card */}
-        <div className="glass-card p-6 space-y-4">
-          <h4 className="font-bold text-white flex items-center gap-2 text-sm">
-            <Mic className="w-4 h-4 text-[var(--primary)]" />
-            Voice Pipeline
-          </h4>
-
-          {/* Audio generation */}
-          <div className="space-y-3 p-3 bg-white/5 rounded-xl border border-[var(--border)]/30">
-            <div className="flex items-center justify-between text-xs text-[var(--text-secondary)]">
-              <span>Text-to-Speech Engine</span>
-              <label className="flex items-center gap-1.5 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={useFreeTTS}
-                  onChange={(e) => {
-                    setUseFreeTTS(e.target.checked);
-                    invalidateGeneratedOutput();
-                  }}
-                  className="rounded border-zinc-700 bg-zinc-900 text-[var(--primary)] focus:ring-[var(--primary)]"
-                />
-                Use Free TTS
-              </label>
+        {/* LEFT: Video Player and Export Actions (Sticky container) */}
+        <div className="lg:col-span-5 space-y-6 lg:sticky lg:top-24 h-fit">
+          <div className="glass-card overflow-hidden flex flex-col items-center bg-black/40 border border-[var(--border)]/60 rounded-3xl p-6 shadow-2xl">
+            <div className="w-full max-w-[280px] sm:max-w-[320px] aspect-[9/16] rounded-2xl overflow-hidden border border-white/10 shadow-inner bg-zinc-950 relative">
+              <Player
+                ref={playerRef}
+                component={AdVideo}
+                inputProps={{
+                  title,
+                  scenes,
+                  audioUrl,
+                  audioDuration,
+                  textColor,
+                  highlightColor,
+                  fontFamily,
+                  layoutType,
+                  subtitleStyle,
+                }}
+                durationInFrames={durationInFrames}
+                fps={30}
+                compositionWidth={1080}
+                compositionHeight={1920}
+                style={{
+                  width: '100%',
+                  height: '100%',
+                }}
+                controls
+              />
             </div>
 
-            {!useFreeTTS && (
-              <div className="space-y-1">
-                <label className="text-[10px] text-[var(--muted)] uppercase font-semibold">ElevenLabs Voice ID</label>
-                <input
-                  type="text"
-                  value={voiceId}
-                  onChange={(e) => {
-                    setVoiceId(e.target.value);
-                    invalidateGeneratedOutput();
-                  }}
-                  className="w-full px-3 py-1.5 bg-black/40 border border-[var(--border)]/50 rounded-lg text-xs text-white"
-                  placeholder="Voice ID (George, Bella...)"
-                />
+            <div className="w-full mt-6 text-center text-xs text-[var(--muted)]">
+              <span>Video Resolution: 1080x1920 (TikTok format)</span>
+              <span className="mx-2">•</span>
+              <span>Duration: {activeDuration.toFixed(1)}s</span>
+            </div>
+          </div>
+
+          <div className="glass-card p-5 space-y-3">
+            <div className="flex items-center justify-between gap-3">
+              <h4 className="font-bold text-white flex items-center gap-2 text-sm">
+                <Sparkles className="w-4 h-4 text-[var(--secondary)]" />
+                Selected Script Variant
+              </h4>
+              <span className="text-[10px] uppercase tracking-wider text-[var(--muted)]">
+                {variantOptions.length} variants
+              </span>
+            </div>
+            <div className="flex flex-wrap gap-2 text-[10px]">
+              <span className="px-2 py-1 rounded-full bg-white/5 border border-[var(--border)] text-[var(--text-secondary)]">
+                Angle: {activeVariant.creative_angle}
+              </span>
+              <span className="px-2 py-1 rounded-full bg-white/5 border border-[var(--border)] text-[var(--text-secondary)]">
+                Score: {activeVariant.score}/100
+              </span>
+              <span className="px-2 py-1 rounded-full bg-white/5 border border-[var(--border)] text-[var(--text-secondary)]">
+                Source: {sourceLabel}
+              </span>
+              <span className="px-2 py-1 rounded-full bg-white/5 border border-[var(--border)] text-[var(--text-secondary)]">
+                Confidence: {confidenceLabel}
+              </span>
+            </div>
+            <p className="text-xs text-[var(--muted)] leading-relaxed">
+              {activeVariant.rationale}
+            </p>
+            {activeVariant.coverageNotes?.length > 0 && (
+              <div className="flex flex-wrap gap-2">
+                {activeVariant.coverageNotes.map((note) => (
+                  <span
+                    key={note}
+                    className="px-2.5 py-1 rounded-full bg-[var(--primary)]/10 border border-[var(--primary)]/20 text-[11px] text-[var(--primary)]"
+                  >
+                    {note}
+                  </span>
+                ))}
               </div>
             )}
-
-            <button
-              onClick={() => void generateVoiceOnly()}
-              disabled={isBuilding}
-              className="w-full flex items-center justify-center gap-2 py-2 rounded-lg bg-[var(--primary)]/10 border border-[var(--primary)]/30 hover:bg-[var(--primary)]/20 text-xs font-semibold text-[var(--primary)] transition-all disabled:opacity-50"
-            >
-              {buildPhase === 'generating-voice' ? (
-                <>
-                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                  Generating voice...
-                </>
-              ) : (
-                <>
-                  <Sparkles className="w-3.5 h-3.5" />
-                  {hasVoiceTrack ? 'Re-generate Voice Audio' : 'Generate Voice Audio'}
-                </>
-              )}
-            </button>
-
-            <button
-              onClick={() => void renderCurrentVideo()}
-              disabled={isBuilding || !audioUrl || !audioDuration}
-              className="w-full flex items-center justify-center gap-2 py-2 rounded-lg bg-gradient-to-r from-[var(--primary)] to-[var(--secondary)] hover:brightness-110 text-xs font-semibold text-white transition-all disabled:opacity-50"
-            >
-              {buildPhase === 'rendering' ? (
-                <>
-                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                  Rendering MP4...
-                </>
-              ) : (
-                <>
-                  <Download className="w-3.5 h-3.5" />
-                  {hasCompletedBuild ? 'Re-render MP4' : 'Render MP4'}
-                </>
-              )}
-            </button>
-
-            <p className="text-[10px] text-[var(--muted)] leading-relaxed">
-              {buildPhase === 'generating-voice'
-                ? 'Voice track is being synthesized automatically.'
-                : buildPhase === 'voice-ready'
-                  ? 'Voice track is ready. You can render MP4 when needed.'
-                  : buildPhase === 'rendering'
-                    ? 'Video is rendering with image, captions, and audio.'
-                    : hasCompletedBuild
-                      ? 'You can rebuild after editing scenes or style settings.'
-                      : 'Generate the voice first, then render MP4 manually if needed.'}
-            </p>
           </div>
 
-          {/* Export Render */}
-          {exportUrl && (
-            <div className="space-y-3 pt-2">
-              <a
-                href={`/api/download?file=${encodeURIComponent(exportUrl.split('/').pop() || '')}`}
-                className="w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-emerald-500 hover:bg-emerald-600 transition-all text-white font-semibold text-sm shadow-lg shadow-emerald-500/20"
-              >
-                <Download className="w-4 h-4" />
-                Download Completed Video
-              </a>
-            </div>
-          )}
-        </div>
+          {/* Voiceover and Render Control Card */}
+          <div className="glass-card p-6 space-y-4">
+            <h4 className="font-bold text-white flex items-center gap-2 text-sm">
+              <Mic className="w-4 h-4 text-[var(--primary)]" />
+              Voice Pipeline
+            </h4>
 
-        <details className="glass-card p-6 space-y-4">
-          <summary className="cursor-pointer list-none flex items-center justify-between gap-3 text-white font-bold text-sm">
-            <span>Advanced: Script Variants</span>
-            <span className="text-[10px] uppercase tracking-wider text-[var(--muted)]">
-              Review / switch
-            </span>
-          </summary>
-          <div className="pt-4 space-y-3">
-            {variantOptions.map((variant, index) => {
-              const isActive = index === activeVariantIndex;
-              return (
-                <button
-                  key={variant.variant_id}
-                  type="button"
-                  onClick={() => loadVariant(index)}
-                  className={`w-full text-left p-4 rounded-2xl border transition-all ${isActive
-                      ? 'bg-[var(--primary)]/10 border-[var(--primary)] shadow-lg shadow-[var(--primary)]/10'
-                      : 'bg-white/5 border-[var(--border)] hover:border-zinc-500'
-                    }`}
-                >
-                  <div className="flex items-start justify-between gap-4">
-                    <div>
-                      <p className="text-sm font-semibold text-white">{variant.creative_angle}</p>
-                      <p className="text-[11px] text-[var(--muted)] mt-1">
-                        {variant.rationale}
-                      </p>
-                    </div>
-                    <span className="text-[10px] px-2 py-1 rounded-full bg-black/40 border border-white/10 text-[var(--text-secondary)]">
-                      {variant.score}/100
-                    </span>
-                  </div>
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    {variant.coverageNotes.slice(0, 3).map((note) => (
-                      <span
-                        key={note}
-                        className="text-[10px] px-2 py-1 rounded-full bg-black/30 border border-white/10 text-[var(--muted)]"
-                      >
-                        {note}
-                      </span>
+            {/* Audio generation */}
+            <div className="space-y-3 p-3 bg-white/5 rounded-xl border border-[var(--border)]/30">
+              <div className="space-y-1.5">
+                <label className="text-xs text-[var(--text-secondary)] font-medium flex items-center justify-between">
+                  <span>AI Speaker Voice (Kokoro TTS)</span>
+                </label>
+                <div className="relative">
+                  <select
+                    value={kokoroVoiceId}
+                    onChange={(e) => {
+                      setKokoroVoiceId(e.target.value);
+                      setCachedAudio({});
+                      invalidateGeneratedOutput();
+                    }}
+                    className="w-full px-3 py-1.5 bg-zinc-900 border border-[var(--border)] rounded-xl text-xs text-white focus:outline-none appearance-none cursor-pointer"
+                  >
+                    {KOKORO_VOICES.map((v) => (
+                      <option key={v.value} value={v.value}>
+                        {v.label}
+                      </option>
                     ))}
-                  </div>
-                </button>
-              );
-            })}
+                  </select>
+                  <ChevronDown className="w-3.5 h-3.5 text-zinc-400 absolute right-3 top-2.5 pointer-events-none" />
+                </div>
+              </div>
+
+              <button
+                onClick={() => void generateVoiceOnly()}
+                disabled={isBuilding}
+                className="w-full flex items-center justify-center gap-2 py-2 rounded-lg bg-[var(--primary)]/10 border border-[var(--primary)]/30 hover:bg-[var(--primary)]/20 text-xs font-semibold text-[var(--primary)] transition-all disabled:opacity-50"
+              >
+                {buildPhase === 'generating-voice' ? (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    Generating voice...
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="w-3.5 h-3.5" />
+                    {hasVoiceTrack ? 'Re-generate Voice Audio' : 'Generate Voice Audio'}
+                  </>
+                )}
+              </button>
+
+              <button
+                onClick={() => void renderCurrentVideo()}
+                disabled={isBuilding || !audioUrl || !audioDuration}
+                className="w-full flex items-center justify-center gap-2 py-2 rounded-lg bg-gradient-to-r from-[var(--primary)] to-[var(--secondary)] hover:brightness-110 text-xs font-semibold text-white transition-all disabled:opacity-50"
+              >
+                {buildPhase === 'rendering' ? (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    Rendering MP4...
+                  </>
+                ) : (
+                  <>
+                    <Download className="w-3.5 h-3.5" />
+                    {hasCompletedBuild ? 'Re-render MP4' : 'Render MP4'}
+                  </>
+                )}
+              </button>
+
+              <p className="text-[10px] text-[var(--muted)] leading-relaxed">
+                {buildPhase === 'generating-voice'
+                  ? 'Voice track is being synthesized automatically.'
+                  : buildPhase === 'voice-ready'
+                    ? 'Voice track is ready. You can render MP4 when needed.'
+                    : buildPhase === 'rendering'
+                      ? 'Video is rendering with image, captions, and audio.'
+                      : hasCompletedBuild
+                        ? 'You can rebuild after editing scenes or style settings.'
+                        : 'Generate the voice first, then render MP4 manually if needed.'}
+              </p>
+            </div>
+
+            {/* Export Render */}
+            {exportUrl && (
+              <div className="space-y-3 pt-2">
+                <a
+                  href={`/api/download?file=${encodeURIComponent(exportUrl.split('/').pop() || '')}`}
+                  className="w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-emerald-500 hover:bg-emerald-600 transition-all text-white font-semibold text-sm shadow-lg shadow-emerald-500/20"
+                >
+                  <Download className="w-4 h-4" />
+                  Download Completed Video
+                </a>
+              </div>
+            )}
           </div>
-        </details>
-      </div>
+        </div>
 
       {/* RIGHT: Detailed Customization Options */}
       <div className="lg:col-span-7 space-y-6">
@@ -1143,5 +1164,6 @@ export function StudioEditor({
         </div>
       </div>
     </div>
-  );
+  </div>
+);
 }

@@ -24,8 +24,11 @@ export function HomeView() {
 
   // Loaded data states
   const [productData, setProductData] = useState<ProductData | null>(null);
-  const [scriptData, setScriptData] = useState<ScriptBundle | null>(null);
+  const [scriptData, setScriptData] = useState<any | null>(null);
   const [serverConfig, setServerConfig] = useState<{ hasGeminiApiKey: boolean } | null>(null);
+
+  const [scriptingTitle, setScriptingTitle] = useState('Analyzing Media & Writing Script');
+  const [scriptingText, setScriptingText] = useState('Gemini is inspecting the chosen images and video keyframe captures to craft a highly engaging marketing script with scene-accurate durations.');
 
   useEffect(() => {
     fetch('/api/config')
@@ -86,6 +89,8 @@ export function HomeView() {
     if (!productData) return;
     
     const apiKeys = getApiKeys();
+    setScriptingTitle('Analyzing Media & Writing Script');
+    setScriptingText('Gemini is inspecting the chosen images and video keyframe captures to craft a highly engaging marketing script with scene-accurate durations.');
     setWorkflowStep('scripting');
 
     // Extract images and video keyframes from ordered assets
@@ -123,10 +128,48 @@ export function HomeView() {
         throw new Error(data.error || 'Failed to write script');
       }
 
+      // Pre-generate voice track using Kokoro TTS before transitioning to studio
+      setScriptingTitle('Generating AI Voiceover (Kokoro TTS)');
+      setScriptingText('Synthesizing high-quality voice track using Kokoro TTS and aligning scenes to voice audio. Almost ready...');
+
+      const selectedVariant = data.selectedVariant;
+      const fullScript = selectedVariant.scenes.map((s: any) => s.subtitle).join(' ');
+      const sceneSubtitles = selectedVariant.scenes.map((s: any) => s.subtitle);
+
+      const voiceRes = await fetch('/api/voice', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          script: fullScript,
+          sceneSubtitles,
+          kokoroVoiceId: 'af_heart', // Default voice
+        }),
+      });
+
+      const voiceData = await voiceRes.json();
+      if (!voiceRes.ok) {
+        throw new Error(voiceData.error || 'Failed to generate voice track');
+      }
+
+      if (Array.isArray(voiceData.sceneAlignments)) {
+        selectedVariant.scenes = selectedVariant.scenes.map((scene: any, idx: number) => {
+          const alignment = voiceData.sceneAlignments.find((item: any) => item.sceneIndex === idx);
+          return alignment ? {
+            ...scene,
+            duration: alignment.duration || scene.duration,
+            word_timings: alignment.wordTimings,
+          } : scene;
+        });
+      }
+
+      data.initialAudioUrl = voiceData.audioBase64;
+      data.initialAudioDuration = voiceData.audioDuration;
+      data.selectedVariant = selectedVariant;
+
       setScriptData(data);
       setWorkflowStep('studio');
       toast.success(
-        `Generated ${data.variants?.length || 1} script variants. Best variant loaded into studio.`,
+        `Generated ${data.variants?.length || 1} script variants. Voice track successfully loaded into studio.`,
         { icon: '✨' }
       );
     } catch (error) {
@@ -238,9 +281,9 @@ export function HomeView() {
               <Sparkles className="w-8 h-8 text-[var(--secondary)] absolute top-6 left-6 animate-pulse" />
             </div>
             <div className="space-y-2">
-              <h3 className="text-xl font-bold text-white">Analyzing Media & Writing Script</h3>
-              <p className="text-sm text-[var(--text-secondary)] leading-relaxed">
-                Gemini is inspecting the chosen images and video keyframe captures to craft a highly engaging marketing script with scene-accurate durations.
+              <h3 className="text-xl font-bold text-white">{scriptingTitle}</h3>
+              <p className="text-sm text-[var(--text-secondary)] leading-relaxed animate-fade-in" key={scriptingTitle}>
+                {scriptingText}
               </p>
             </div>
           </div>
@@ -256,7 +299,8 @@ export function HomeView() {
             productVideos={productData.videos || []}
             sourceType={productData.sourceType}
             confidence={productData.confidence}
-            autoBuild
+            initialAudioUrl={scriptData.initialAudioUrl}
+            initialAudioDuration={scriptData.initialAudioDuration}
           />
         )}
 
