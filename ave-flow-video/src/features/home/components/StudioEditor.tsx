@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { getApiKeys } from '@/features/settings/settings.storage';
+import { buildVideoDownloadHref } from '@/lib/video-storage';
 
 interface StudioEditorProps {
   selectedVariant: ScriptVariant;
@@ -742,7 +743,7 @@ export function StudioEditor({
             {exportUrl && (
               <div className="space-y-3 pt-2">
                 <a
-                  href={`/api/download?file=${encodeURIComponent(exportUrl.split('/').pop() || '')}`}
+                  href={buildVideoDownloadHref(exportUrl)}
                   className="w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-emerald-500 hover:bg-emerald-600 transition-all text-white font-semibold text-sm shadow-lg shadow-emerald-500/20"
                 >
                   <Download className="w-4 h-4" />

@@ -4,6 +4,7 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { Play, Pause, RotateCcw, Volume2, VolumeX, Info, Tv, Layers, Grid, Download } from 'lucide-react';
 import toast from 'react-hot-toast';
 import type { PipelineResult } from '@/features/pipeline/pipeline.types';
+import { buildVideoDownloadHref, extractVideoFilename } from '@/lib/video-storage';
 
 interface VideoPreviewProps {
   result: PipelineResult;
@@ -101,11 +102,11 @@ export function VideoPreview({ result }: VideoPreviewProps) {
 
   const handleDownload = async () => {
     try {
-      const filename = result.videoUrl.split('/').pop();
-      if (!filename) throw new Error('Invalid video URL');
+      const filename = extractVideoFilename(result.videoUrl);
+      const downloadUrl = buildVideoDownloadHref(result.videoUrl);
 
       toast.loading('Preparing download...', { id: 'download' });
-      const res = await fetch(`/api/download?file=${encodeURIComponent(filename)}`);
+      const res = await fetch(downloadUrl);
       if (!res.ok) throw new Error('Download failed');
 
       const blob = await res.blob();
