@@ -5,6 +5,7 @@ import path from 'path';
 import fs from 'fs';
 import os from 'os';
 import crypto from 'crypto';
+import { buildRenderObjectKey, canUploadToR2, uploadFileToR2 } from '@/lib/storage/r2';
 
 // ── Remotion Bundle Cache ──────────────────────────────────────────
 // Cache the compiled Webpack bundle at module scope to avoid re-bundling
@@ -327,11 +328,38 @@ export async function POST(req: NextRequest) {
 
     console.log(`[Remotion Render] Successfully saved video to: ${outputFilePath}`);
 
+    const filename = `${videoId}.mp4`;
+    const localVideoUrl = `/api/renders/${filename}`;
+    const duration = durationInFrames / fps;
+    let videoUrl = localVideoUrl;
+    let storage: 'local' | 'cloudflare-r2' = 'local';
+    let objectKey: string | null = null;
+
+    if (canUploadToR2()) {
+      const uploadStartedAt = Date.now();
+
+      try {
+        objectKey = buildRenderObjectKey(filename);
+        const uploadResult = await uploadFileToR2(outputFilePath, objectKey);
+        videoUrl = uploadResult.videoUrl;
+        storage = uploadResult.storage;
+        console.log(
+          `[Remotion Render] Uploaded video to R2 in ${Date.now() - uploadStartedAt}ms: ${objectKey}`
+        );
+      } catch (uploadError) {
+        console.error('[Remotion Render] R2 upload failed. Falling back to local file URL.', uploadError);
+      }
+    } else {
+      console.log('[Remotion Render] R2 upload skipped because configuration is incomplete.');
+    }
+
     return NextResponse.json({
       success: true,
-      videoUrl: `/api/renders/${videoId}.mp4`,
-      filename: `${videoId}.mp4`,
-      duration: durationInFrames / fps,
+      videoUrl,
+      filename,
+      duration,
+      storage,
+      objectKey,
     });
   } catch (error) {
     console.error('[Remotion Render Route Error]', error);

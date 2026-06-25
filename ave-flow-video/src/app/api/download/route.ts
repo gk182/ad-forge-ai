@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { BACKEND_URL } from '@/config/env';
+import { BACKEND_URL, isAllowedR2PublicUrl } from '@/config/env';
 import path from 'path';
 import fs from 'fs';
 
@@ -7,8 +7,42 @@ const BACKEND_BASE_URL = BACKEND_URL;
 
 export async function GET(req: NextRequest) {
   const filename = req.nextUrl.searchParams.get('file');
+  const remoteUrl = req.nextUrl.searchParams.get('url');
+
+  if (remoteUrl) {
+    if (!isAllowedR2PublicUrl(remoteUrl)) {
+      return NextResponse.json({ error: 'Remote download URL is not allowed.' }, { status: 400 });
+    }
+
+    try {
+      const parsedUrl = new URL(remoteUrl);
+      const remoteFilename = path.basename(parsedUrl.pathname) || 'video.mp4';
+      const response = await fetch(remoteUrl);
+
+      if (!response.ok || !response.body) {
+        return NextResponse.json({ error: 'Remote file could not be downloaded.' }, { status: 404 });
+      }
+
+      const headers = new Headers();
+      headers.set('Content-Type', response.headers.get('content-type') || 'video/mp4');
+      headers.set('Content-Disposition', `attachment; filename="${remoteFilename}"`);
+
+      const contentLength = response.headers.get('content-length');
+      if (contentLength) headers.set('Content-Length', contentLength);
+
+      return new Response(response.body, {
+        status: response.status,
+        statusText: response.statusText,
+        headers,
+      });
+    } catch (error) {
+      console.error('[Download Error] Failed to proxy remote video', error);
+      return NextResponse.json({ error: 'Remote download failed' }, { status: 500 });
+    }
+  }
+
   if (!filename) {
-    return NextResponse.json({ error: 'Missing file parameter' }, { status: 400 });
+    return NextResponse.json({ error: 'Missing file or url parameter' }, { status: 400 });
   }
 
   // Prevent directory traversal attacks by extracting base filename
