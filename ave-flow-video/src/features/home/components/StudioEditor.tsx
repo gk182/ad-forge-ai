@@ -3,8 +3,10 @@
 import { useState, useRef, useMemo, useEffect } from 'react';
 import { Player, PlayerRef } from '@remotion/player';
 import { AdVideo } from '@/remotion/AdVideo';
+import { MobileAppComposition } from '@/remotion/mobile-app/MobileAppComposition';
 import type { Scene, WordTiming } from '@/remotion/AdVideo';
 import type { ScriptVariant } from '@/features/pipeline/pipeline.types';
+import type { MobileAppPreset } from '@/remotion/mobile-app/types';
 import {
   Play,
   Pause,
@@ -33,6 +35,8 @@ interface StudioEditorProps {
   confidence?: number;
   initialAudioUrl?: string;
   initialAudioDuration?: number;
+  videoType?: 'product' | 'mobile_app';
+  logoUrl?: string;
 }
 
 const GOOGLE_FONTS = [
@@ -65,6 +69,22 @@ const TRANSITION_TYPES = [
   { value: 'slide_down', label: 'Slide Down' },
   { value: 'zoom_in', label: 'Zoom In' },
   { value: 'none', label: 'Cut (None)' },
+];
+
+const MOBILE_APP_PRESETS = [
+  { value: 'hero_floating', label: '01 Hero Floating (Clean, Premium)' },
+  { value: 'orbit_reveal', label: '02 Orbit Reveal (3D, Dynamic)' },
+  { value: 'screenshot_cascade', label: '03 Screenshot Cascade (Smooth, Modern)' },
+  { value: 'tiktok_hook', label: '04 TikTok Hook Intro (Fast, Energetic)' },
+  { value: 'phone_wall', label: '05 Infinite Phone Wall (Epic, Immersive)' },
+  { value: 'phone_explosion', label: '06 Phone Explosion (Energetic, Impact)' },
+  { value: 'blueprint_style', label: '07 Blueprint Grid (Architect, Technical)' },
+  { value: 'ai_assistant', label: '08 AI Assistant Style (Futuristic, Smart)' },
+  { value: 'feature_spotlight', label: '09 Feature Spotlight (Focus, Professional)' },
+  { value: 'premium_luxury', label: '10 Premium Luxury (Elegant, Cinematic)' },
+  { value: 'floating_cards', label: '11 Floating Cards (Minimal, Clean)' },
+  { value: 'cinematic_reveal', label: '12 Cinematic Reveal (Dramatic, Emotional)' },
+  { value: 'front_flat', label: '13 Front-Facing Flat (Direct, Minimal)' },
 ];
 
 type BuildPhase = 'idle' | 'generating-voice' | 'voice-ready' | 'rendering' | 'completed' | 'error';
@@ -145,20 +165,43 @@ export function StudioEditor({
   confidence,
   initialAudioUrl,
   initialAudioDuration,
+  videoType = 'product',
+  logoUrl,
 }: StudioEditorProps) {
   const playerRef = useRef<PlayerRef>(null);
   const buildLockRef = useRef(false);
   const variantOptions = variants.length > 0 ? variants : [selectedVariant];
 
+  // Mobile App Specific States
+  const [appName, setAppName] = useState(() => (selectedVariant as any).appName || 'App Studio');
+  const [tagline, setTagline] = useState(() => (selectedVariant as any).tagline || 'Revolutionary Mobile App');
+  const [primaryColor, setPrimaryColor] = useState(() => (selectedVariant as any).primaryColor || '#6366f1');
+  const [secondaryColor, setSecondaryColor] = useState(() => (selectedVariant as any).secondaryColor || '#ec4899');
+  const [preset, setPreset] = useState<MobileAppPreset>(() => (selectedVariant as any).preset || 'hero_floating');
+
   // States
   const [activeVariantIndex, setActiveVariantIndex] = useState(0);
-  const [scenes, setScenes] = useState<Scene[]>(() =>
-    buildScenesFromVariant(selectedVariant, productImages, productVideos)
-  );
+  const [scenes, setScenes] = useState<any[]>(() => {
+    if (videoType === 'mobile_app') {
+      const fallbackImage = productImages[0] || 'https://images.unsplash.com/photo-1512941937669-90a1b58e7e9c?auto=format&fit=crop&w=600&q=80';
+      return (selectedVariant.scenes || []).map((s: any) => ({
+        media_type: 'image',
+        media_url: s.imageUrl || s.media_url || fallbackImage,
+        duration: s.duration || 4,
+        subtitle: s.subtitle || '',
+        featureLabel: s.featureLabel || 'FEATURE',
+        featureDescription: s.featureDescription || 'Feature Detail',
+        animation: s.animation || 'spring_scale',
+        transition: s.transition || s.transition_type || 'fade',
+        word_timings: s.word_timings,
+      }));
+    }
+    return buildScenesFromVariant(selectedVariant, productImages, productVideos);
+  });
   const [title, setTitle] = useState('');
   const [textColor, setTextColor] = useState('#ffffff');
   const [highlightColor, setHighlightColor] = useState('#facc15');
-  const [fontFamily, setFontFamily] = useState('Montserrat');
+  const [fontFamily, setFontFamily] = useState(videoType === 'mobile_app' ? 'Outfit' : 'Montserrat');
   const [layoutType, setLayoutType] = useState<'classic' | 'splitscreen' | 'greenscreen'>('classic');
   const [subtitleStyle, setSubtitleStyle] = useState<'bounce' | 'glow' | 'slide_up' | 'rotate' | 'fade'>('bounce');
 
@@ -174,16 +217,30 @@ export function StudioEditor({
       {
         audioUrl: string;
         audioDuration: number;
-        scenes: Scene[];
+        scenes: any[];
       }
     >
   >(() => {
-    const initialCache: Record<number, { audioUrl: string; audioDuration: number; scenes: Scene[] }> = {};
+    const initialCache: Record<number, { audioUrl: string; audioDuration: number; scenes: any[] }> = {};
     if (initialAudioUrl && initialAudioDuration) {
+      const initialScenes = videoType === 'mobile_app'
+        ? (variantOptions[0]?.scenes || selectedVariant.scenes || []).map((s: any) => ({
+            media_type: 'image',
+            media_url: s.imageUrl || s.media_url || (productImages[0] || ''),
+            duration: s.duration || 4,
+            subtitle: s.subtitle || '',
+            featureLabel: s.featureLabel || 'FEATURE',
+            featureDescription: s.featureDescription || 'Feature Detail',
+            animation: s.animation || 'spring_scale',
+            transition: s.transition || s.transition_type || 'fade',
+            word_timings: s.word_timings,
+          }))
+        : buildScenesFromVariant(variantOptions[0] || selectedVariant, productImages, productVideos);
+
       initialCache[0] = {
         audioUrl: initialAudioUrl,
         audioDuration: initialAudioDuration,
-        scenes: buildScenesFromVariant(variantOptions[0] || selectedVariant, productImages, productVideos),
+        scenes: initialScenes,
       };
     }
     return initialCache;
@@ -211,7 +268,23 @@ export function StudioEditor({
   const confidenceLabel =
     typeof confidence === 'number' ? `${Math.round(confidence * 100)}%` : 'n/a';
 
-  const stripSceneAlignment = (scene: Scene): Scene => ({
+  const scenesForPlayer = useMemo(() => {
+    if (videoType === 'mobile_app') {
+      return scenes.map((s) => ({
+        imageUrl: s.media_url || s.imageUrl || '',
+        duration: s.duration,
+        subtitle: s.subtitle,
+        featureLabel: s.featureLabel || 'FEATURE',
+        featureDescription: s.featureDescription || 'Feature Detail',
+        animation: s.animation || 'spring_scale',
+        transition: s.transition || s.transition_type || 'fade',
+        word_timings: s.word_timings,
+      }));
+    }
+    return scenes;
+  }, [scenes, videoType]);
+
+  const stripSceneAlignment = (scene: any): any => ({
     ...scene,
     word_timings: undefined,
   });
@@ -249,12 +322,22 @@ export function StudioEditor({
       setAudioUrl(cached.audioUrl);
       setAudioDuration(cached.audioDuration);
       setBuildPhase('voice-ready');
+      if (videoType === 'mobile_app') {
+        setPreset((nextVariant as any).preset || 'hero_floating');
+        setPrimaryColor((nextVariant as any).primaryColor || '#6366f1');
+        setSecondaryColor((nextVariant as any).secondaryColor || '#ec4899');
+      }
     } else {
       const nextScenes = buildScenesFromVariant(nextVariant, productImages, productVideos);
       setScenes(nextScenes);
       setAudioUrl('');
       setAudioDuration(undefined);
       setBuildPhase('idle');
+      if (videoType === 'mobile_app') {
+        setPreset((nextVariant as any).preset || 'hero_floating');
+        setPrimaryColor((nextVariant as any).primaryColor || '#6366f1');
+        setSecondaryColor((nextVariant as any).secondaryColor || '#ec4899');
+      }
       await generateVoiceTrackForScenes(nextScenes, index);
     }
   };
@@ -460,17 +543,32 @@ export function StudioEditor({
     setExportUrl('');
     toast.loading('Rendering full video...', { id: 'build-toast' });
 
-    const payload = {
-      title,
-      scenes,
-      audioUrl: audioBase64,
-      audioDuration: duration,
-      textColor,
-      highlightColor,
-      fontFamily,
-      layoutType,
-      subtitleStyle,
-    };
+    const payload = videoType === 'mobile_app'
+      ? {
+          compositionId: 'MobileAppVideo',
+          appName,
+          tagline,
+          logoUrl,
+          scenes: scenesForPlayer,
+          audioUrl: audioBase64,
+          audioDuration: duration,
+          primaryColor,
+          secondaryColor,
+          textColor,
+          fontFamily,
+          preset,
+        }
+      : {
+          title,
+          scenes,
+          audioUrl: audioBase64,
+          audioDuration: duration,
+          textColor,
+          highlightColor,
+          fontFamily,
+          layoutType,
+          subtitleStyle,
+        };
 
     const res = await fetch('/api/render-remotion', {
       method: 'POST',
@@ -559,7 +657,7 @@ export function StudioEditor({
           const isActive = index === activeVariantIndex;
           return (
             <button
-              key={variant.variant_id}
+              key={variant.variant_id || index}
               type="button"
               onClick={() => void loadVariant(index)}
               disabled={isBuilding}
@@ -570,7 +668,7 @@ export function StudioEditor({
               }`}
             >
               <Sparkles className={`w-3.5 h-3.5 ${isActive ? 'text-white' : 'text-[var(--primary)]'}`} />
-              {variant.creative_angle}
+              {variant.creative_angle || 'Mobile App Video'}
             </button>
           );
         })}
@@ -584,18 +682,34 @@ export function StudioEditor({
             <div className="w-full max-w-[280px] sm:max-w-[320px] aspect-[9/16] rounded-2xl overflow-hidden border border-white/10 shadow-inner bg-zinc-950 relative">
               <Player
                 ref={playerRef}
-                component={AdVideo}
-                inputProps={{
-                  title,
-                  scenes,
-                  audioUrl,
-                  audioDuration,
-                  textColor,
-                  highlightColor,
-                  fontFamily,
-                  layoutType,
-                  subtitleStyle,
-                }}
+                component={videoType === 'mobile_app' ? MobileAppComposition : AdVideo}
+                inputProps={
+                  videoType === 'mobile_app'
+                    ? {
+                        appName,
+                        tagline,
+                        logoUrl,
+                        scenes: scenesForPlayer,
+                        audioUrl,
+                        audioDuration,
+                        primaryColor,
+                        secondaryColor,
+                        textColor,
+                        fontFamily,
+                        preset,
+                      }
+                    : {
+                        title,
+                        scenes,
+                        audioUrl,
+                        audioDuration,
+                        textColor,
+                        highlightColor,
+                        fontFamily,
+                        layoutType,
+                        subtitleStyle,
+                      }
+                }
                 durationInFrames={durationInFrames}
                 fps={30}
                 compositionWidth={1080}
@@ -760,139 +874,285 @@ export function StudioEditor({
         <div className="glass-card p-6 space-y-4">
           <h4 className="font-bold text-white flex items-center gap-2 text-base border-b border-[var(--border)]/40 pb-3">
             <Type className="w-5 h-5 text-[var(--secondary)]" />
-            Reviewer Template Settings
+            {videoType === 'mobile_app' ? 'Mobile App Style Settings' : 'Reviewer Template Settings'}
           </h4>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="space-y-1">
-              <label className="text-xs text-[var(--text-secondary)] font-medium">Header Title</label>
-              <input
-                type="text"
-                value={title}
-                onChange={(e) => {
-                  setTitle(e.target.value);
-                  markRenderDirty();
-                }}
-                className="w-full px-3.5 py-2 bg-white/5 border border-[var(--border)] rounded-xl text-sm text-white focus:outline-none focus:border-[var(--primary)]"
-                placeholder="PROD REVIEW"
-              />
-            </div>
-
-            <div className="space-y-1">
-              <label className="text-xs text-[var(--text-secondary)] font-medium">Font Family</label>
-              <div className="relative">
-                <select
-                  value={fontFamily}
-                  onChange={(e) => {
-                    setFontFamily(e.target.value);
-                    markRenderDirty();
-                  }}
-                  className="w-full px-3.5 py-2 bg-zinc-900 border border-[var(--border)] rounded-xl text-sm text-white focus:outline-none appearance-none cursor-pointer"
-                >
-                  {GOOGLE_FONTS.map((font) => (
-                    <option key={font} value={font}>
-                      {font}
-                    </option>
-                  ))}
-                </select>
-                <ChevronDown className="w-4 h-4 text-zinc-400 absolute right-3.5 top-3 pointer-events-none" />
-              </div>
-            </div>
-
-            <div className="space-y-1">
-              <label className="text-xs text-[var(--text-secondary)] font-medium">Subtitle Text Color</label>
-              <div className="flex gap-2">
-                <input
-                  type="color"
-                  value={textColor}
-                  onChange={(e) => {
-                    setTextColor(e.target.value);
-                    markRenderDirty();
-                  }}
-                  className="w-9 h-9 p-0.5 rounded border border-[var(--border)] bg-transparent cursor-pointer"
-                />
-                <input
-                  type="text"
-                  value={textColor}
-                  onChange={(e) => {
-                    setTextColor(e.target.value);
-                    markRenderDirty();
-                  }}
-                  className="flex-1 px-3 py-1.5 bg-white/5 border border-[var(--border)] rounded-lg text-xs text-white uppercase"
-                />
-              </div>
-            </div>
-
-            <div className="space-y-1">
-              <label className="text-xs text-[var(--text-secondary)] font-medium">Subtitle Active Highlight</label>
-              <div className="flex gap-2">
-                <input
-                  type="color"
-                  value={highlightColor}
-                  onChange={(e) => {
-                    setHighlightColor(e.target.value);
-                    markRenderDirty();
-                  }}
-                  className="w-9 h-9 p-0.5 rounded border border-[var(--border)] bg-transparent cursor-pointer"
-                />
-                <input
-                  type="text"
-                  value={highlightColor}
-                  onChange={(e) => {
-                    setHighlightColor(e.target.value);
-                    markRenderDirty();
-                  }}
-                  className="flex-1 px-3 py-1.5 bg-white/5 border border-[var(--border)] rounded-lg text-xs text-white uppercase"
-                />
-              </div>
-            </div>
-
-            <div className="space-y-1 md:col-span-2">
-              <label className="text-xs text-[var(--text-secondary)] font-medium">Subtitle Animation Style</label>
-              <div className="relative">
-                <select
-                  value={subtitleStyle}
-                  onChange={(e) => {
-                    setSubtitleStyle(e.target.value as any);
-                    markRenderDirty();
-                  }}
-                  className="w-full px-3.5 py-2 bg-zinc-900 border border-[var(--border)] rounded-xl text-sm text-white focus:outline-none appearance-none cursor-pointer"
-                >
-                  <option value="bounce">Word Bounce (Phồng to)</option>
-                  <option value="glow">Word Glow (Phát sáng)</option>
-                  <option value="slide_up">Word Slide Up (Nhảy lên)</option>
-                  <option value="rotate">Word Rotate (Nghiêng lắc)</option>
-                  <option value="fade">Cinematic Focus (Mờ xung quanh)</option>
-                </select>
-                <ChevronDown className="w-4 h-4 text-zinc-400 absolute right-3.5 top-3 pointer-events-none" />
-              </div>
-            </div>
-
-            <div className="space-y-1 md:col-span-2">
-              <label className="text-xs text-[var(--text-secondary)] font-medium">Video Layout Pattern</label>
-              <div className="grid grid-cols-3 gap-3">
-                {[
-                  { id: 'classic', label: 'Classic Text' },
-                  { id: 'splitscreen', label: 'Split Screen' },
-                  { id: 'greenscreen', label: 'Green Screen' },
-                ].map((lay) => (
-                  <button
-                    key={lay.id}
-                    onClick={() => {
-                      setLayoutType(lay.id as any);
+          {videoType === 'mobile_app' ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="space-y-1 md:col-span-2">
+                <label className="text-xs text-[var(--text-secondary)] font-medium">Video Style Preset</label>
+                <div className="relative">
+                  <select
+                    value={preset}
+                    onChange={(e) => {
+                      setPreset(e.target.value as MobileAppPreset);
                       markRenderDirty();
                     }}
-                    className={`py-2 px-3 border rounded-xl text-xs font-semibold transition-all ${layoutType === lay.id
-                        ? 'bg-[var(--primary)]/10 border-[var(--primary)] text-[var(--primary)]'
-                        : 'border-[var(--border)] text-[var(--text-secondary)] hover:border-zinc-500'
-                      }`}
+                    className="w-full px-3.5 py-2 bg-zinc-900 border border-[var(--border)] rounded-xl text-sm text-white focus:outline-none appearance-none cursor-pointer"
                   >
-                    {lay.label}
-                  </button>
-                ))}
+                    {MOBILE_APP_PRESETS.map((p) => (
+                      <option key={p.value} value={p.value}>
+                        {p.label}
+                      </option>
+                    ))}
+                  </select>
+                  <ChevronDown className="w-4 h-4 text-zinc-400 absolute right-3.5 top-3 pointer-events-none" />
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-xs text-[var(--text-secondary)] font-medium">App Name</label>
+                <input
+                  type="text"
+                  value={appName}
+                  onChange={(e) => {
+                    setAppName(e.target.value);
+                    markRenderDirty();
+                  }}
+                  className="w-full px-3.5 py-2 bg-white/5 border border-[var(--border)] rounded-xl text-sm text-white focus:outline-none focus:border-[var(--primary)]"
+                  placeholder="e.g. AveFlow"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-xs text-[var(--text-secondary)] font-medium">Tagline / Pitch</label>
+                <input
+                  type="text"
+                  value={tagline}
+                  onChange={(e) => {
+                    setTagline(e.target.value);
+                    markRenderDirty();
+                  }}
+                  className="w-full px-3.5 py-2 bg-white/5 border border-[var(--border)] rounded-xl text-sm text-white focus:outline-none focus:border-[var(--primary)]"
+                  placeholder="e.g. AI-Powered Video Gen"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-xs text-[var(--text-secondary)] font-medium">Font Family</label>
+                <div className="relative">
+                  <select
+                    value={fontFamily}
+                    onChange={(e) => {
+                      setFontFamily(e.target.value);
+                      markRenderDirty();
+                    }}
+                    className="w-full px-3.5 py-2 bg-zinc-900 border border-[var(--border)] rounded-xl text-sm text-white focus:outline-none appearance-none cursor-pointer"
+                  >
+                    {GOOGLE_FONTS.map((font) => (
+                      <option key={font} value={font}>
+                        {font}
+                      </option>
+                    ))}
+                  </select>
+                  <ChevronDown className="w-4 h-4 text-zinc-400 absolute right-3.5 top-3 pointer-events-none" />
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-xs text-[var(--text-secondary)] font-medium">Caption Text Color</label>
+                <div className="flex gap-2">
+                  <input
+                    type="color"
+                    value={textColor}
+                    onChange={(e) => {
+                      setTextColor(e.target.value);
+                      markRenderDirty();
+                    }}
+                    className="w-9 h-9 p-0.5 rounded border border-[var(--border)] bg-transparent cursor-pointer"
+                  />
+                  <input
+                    type="text"
+                    value={textColor}
+                    onChange={(e) => {
+                      setTextColor(e.target.value);
+                      markRenderDirty();
+                    }}
+                    className="flex-1 px-3 py-1.5 bg-white/5 border border-[var(--border)] rounded-lg text-xs text-white uppercase"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-xs text-[var(--text-secondary)] font-medium">Brand Primary Color</label>
+                <div className="flex gap-2">
+                  <input
+                    type="color"
+                    value={primaryColor}
+                    onChange={(e) => {
+                      setPrimaryColor(e.target.value);
+                      markRenderDirty();
+                    }}
+                    className="w-9 h-9 p-0.5 rounded border border-[var(--border)] bg-transparent cursor-pointer"
+                  />
+                  <input
+                    type="text"
+                    value={primaryColor}
+                    onChange={(e) => {
+                      setPrimaryColor(e.target.value);
+                      markRenderDirty();
+                    }}
+                    className="flex-1 px-3 py-1.5 bg-white/5 border border-[var(--border)] rounded-lg text-xs text-white uppercase"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-xs text-[var(--text-secondary)] font-medium">Brand Secondary Color</label>
+                <div className="flex gap-2">
+                  <input
+                    type="color"
+                    value={secondaryColor}
+                    onChange={(e) => {
+                      setSecondaryColor(e.target.value);
+                      markRenderDirty();
+                    }}
+                    className="w-9 h-9 p-0.5 rounded border border-[var(--border)] bg-transparent cursor-pointer"
+                  />
+                  <input
+                    type="text"
+                    value={secondaryColor}
+                    onChange={(e) => {
+                      setSecondaryColor(e.target.value);
+                      markRenderDirty();
+                    }}
+                    className="flex-1 px-3 py-1.5 bg-white/5 border border-[var(--border)] rounded-lg text-xs text-white uppercase"
+                  />
+                </div>
               </div>
             </div>
-          </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="space-y-1">
+                <label className="text-xs text-[var(--text-secondary)] font-medium">Header Title</label>
+                <input
+                  type="text"
+                  value={title}
+                  onChange={(e) => {
+                    setTitle(e.target.value);
+                    markRenderDirty();
+                  }}
+                  className="w-full px-3.5 py-2 bg-white/5 border border-[var(--border)] rounded-xl text-sm text-white focus:outline-none focus:border-[var(--primary)]"
+                  placeholder="PROD REVIEW"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-xs text-[var(--text-secondary)] font-medium">Font Family</label>
+                <div className="relative">
+                  <select
+                    value={fontFamily}
+                    onChange={(e) => {
+                      setFontFamily(e.target.value);
+                      markRenderDirty();
+                    }}
+                    className="w-full px-3.5 py-2 bg-zinc-900 border border-[var(--border)] rounded-xl text-sm text-white focus:outline-none appearance-none cursor-pointer"
+                  >
+                    {GOOGLE_FONTS.map((font) => (
+                      <option key={font} value={font}>
+                        {font}
+                      </option>
+                    ))}
+                  </select>
+                  <ChevronDown className="w-4 h-4 text-zinc-400 absolute right-3.5 top-3 pointer-events-none" />
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-xs text-[var(--text-secondary)] font-medium">Subtitle Text Color</label>
+                <div className="flex gap-2">
+                  <input
+                    type="color"
+                    value={textColor}
+                    onChange={(e) => {
+                      setTextColor(e.target.value);
+                      markRenderDirty();
+                    }}
+                    className="w-9 h-9 p-0.5 rounded border border-[var(--border)] bg-transparent cursor-pointer"
+                  />
+                  <input
+                    type="text"
+                    value={textColor}
+                    onChange={(e) => {
+                      setTextColor(e.target.value);
+                      markRenderDirty();
+                    }}
+                    className="flex-1 px-3 py-1.5 bg-white/5 border border-[var(--border)] rounded-lg text-xs text-white uppercase"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-xs text-[var(--text-secondary)] font-medium">Subtitle Active Highlight</label>
+                <div className="flex gap-2">
+                  <input
+                    type="color"
+                    value={highlightColor}
+                    onChange={(e) => {
+                      setHighlightColor(e.target.value);
+                      markRenderDirty();
+                    }}
+                    className="w-9 h-9 p-0.5 rounded border border-[var(--border)] bg-transparent cursor-pointer"
+                  />
+                  <input
+                    type="text"
+                    value={highlightColor}
+                    onChange={(e) => {
+                      setHighlightColor(e.target.value);
+                      markRenderDirty();
+                    }}
+                    className="flex-1 px-3 py-1.5 bg-white/5 border border-[var(--border)] rounded-lg text-xs text-white uppercase"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1 md:col-span-2">
+                <label className="text-xs text-[var(--text-secondary)] font-medium">Subtitle Animation Style</label>
+                <div className="relative">
+                  <select
+                    value={subtitleStyle}
+                    onChange={(e) => {
+                      setSubtitleStyle(e.target.value as any);
+                      markRenderDirty();
+                    }}
+                    className="w-full px-3.5 py-2 bg-zinc-900 border border-[var(--border)] rounded-xl text-sm text-white focus:outline-none appearance-none cursor-pointer"
+                  >
+                    <option value="bounce">Word Bounce (Phồng to)</option>
+                    <option value="glow">Word Glow (Phát sáng)</option>
+                    <option value="slide_up">Word Slide Up (Nhảy lên)</option>
+                    <option value="rotate">Word Rotate (Nghiêng lắc)</option>
+                    <option value="fade">Cinematic Focus (Mờ xung quanh)</option>
+                  </select>
+                  <ChevronDown className="w-4 h-4 text-zinc-400 absolute right-3.5 top-3 pointer-events-none" />
+                </div>
+              </div>
+
+              <div className="space-y-1 md:col-span-2">
+                <label className="text-xs text-[var(--text-secondary)] font-medium">Video Layout Pattern</label>
+                <div className="grid grid-cols-3 gap-3">
+                  {[
+                    { id: 'classic', label: 'Classic Text' },
+                    { id: 'splitscreen', label: 'Split Screen' },
+                    { id: 'greenscreen', label: 'Green Screen' },
+                  ].map((lay) => (
+                    <button
+                      key={lay.id}
+                      onClick={() => {
+                        setLayoutType(lay.id as any);
+                        markRenderDirty();
+                      }}
+                      className={`py-2 px-3 border rounded-xl text-xs font-semibold transition-all ${layoutType === lay.id
+                          ? 'bg-[var(--primary)]/10 border-[var(--primary)] text-[var(--primary)]'
+                          : 'border-[var(--border)] text-[var(--text-secondary)] hover:border-zinc-500'
+                        }`}
+                    >
+                      {lay.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* TAB 2: Scene Timeline & Content Editor */}
@@ -966,171 +1226,266 @@ export function StudioEditor({
             </div>
 
             {/* Media Selector for Scene */}
-            <div className="space-y-4 pt-2">
-              {/* Media Type Toggler */}
-              <div className="space-y-1.5">
-                <label className="text-xs text-[var(--text-secondary)] font-medium">Media Source Type</label>
-                <div className="grid grid-cols-2 gap-2 p-1 bg-white/5 border border-[var(--border)]/20 rounded-xl max-w-md">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const defaultImg = productImages[0] || '';
-                      updateScene(activeSceneIndex, { media_type: 'image', media_url: defaultImg });
-                    }}
-                    className={`py-1.5 text-xs font-semibold rounded-lg flex items-center justify-center gap-1.5 transition-all ${scenes[activeSceneIndex].media_type === 'image'
-                        ? 'bg-zinc-800 text-white shadow-sm'
-                        : 'text-[var(--muted)] hover:text-white'
-                      }`}
-                  >
-                    <ImageIcon className="w-3.5 h-3.5" />
-                    Product Images
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const defaultVid = productVideos[0] || '';
-                      updateScene(activeSceneIndex, { media_type: 'video', media_url: defaultVid, video_start_offset: 0 });
-                    }}
-                    className={`py-1.5 text-xs font-semibold rounded-lg flex items-center justify-center gap-1.5 transition-all ${scenes[activeSceneIndex].media_type === 'video'
-                        ? 'bg-zinc-800 text-white shadow-sm'
-                        : 'text-[var(--muted)] hover:text-white'
-                      }`}
-                  >
-                    <VideoIcon className="w-3.5 h-3.5" />
-                    Product Videos
-                  </button>
-                </div>
-              </div>
-
-              {/* Selector List and Controls */}
+            {videoType === 'mobile_app' ? (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  {scenes[activeSceneIndex].media_type === 'image' ? (
-                    <>
-                      <label className="text-xs text-[var(--text-secondary)] font-medium block">Select Image Asset</label>
-                      <div className="flex items-center gap-2 overflow-x-auto pb-1 max-w-full scrollbar-thin">
-                        {productImages.map((imgUrl, i) => (
-                          <button
-                            key={i}
-                            type="button"
-                            onClick={() => updateScene(activeSceneIndex, { media_url: imgUrl })}
-                            className={`flex-none w-14 aspect-square rounded-lg overflow-hidden border transition-all ${scenes[activeSceneIndex].media_url === imgUrl
-                                ? 'border-[var(--primary)] ring-2 ring-[var(--primary)]/20'
-                                : 'border-transparent hover:border-zinc-500'
-                              }`}
-                          >
-                            <img src={imgUrl} className="w-full h-full object-cover" alt="Product thumbnail" />
-                          </button>
-                        ))}
-                        {productImages.length === 0 && (
-                          <span className="text-xs text-[var(--muted)]">No images found.</span>
-                        )}
-                      </div>
-                    </>
-                  ) : (
-                    <>
-                      <label className="text-xs text-[var(--text-secondary)] font-medium block">Select Video Clip</label>
-                      <div className="flex flex-wrap gap-2">
-                        {productVideos.map((vidUrl, i) => (
-                          <button
-                            key={i}
-                            type="button"
-                            onClick={() => updateScene(activeSceneIndex, { media_url: vidUrl })}
-                            className={`px-3 py-1.5 rounded-lg border text-xs font-semibold flex items-center gap-1.5 transition-all ${scenes[activeSceneIndex].media_url === vidUrl
-                                ? 'bg-[var(--primary)]/20 border-[var(--primary)] text-white ring-2 ring-[var(--primary)]/20'
-                                : 'bg-white/5 border-[var(--border)] text-[var(--muted)] hover:border-zinc-500 hover:text-white'
-                              }`}
-                            title={vidUrl}
-                          >
-                            <VideoIcon className="w-3.5 h-3.5" />
-                            Clip #{i + 1}
-                          </button>
-                        ))}
-                        {productVideos.length === 0 && (
-                          <span className="text-xs text-[var(--muted)]">No crawled videos available.</span>
-                        )}
-                      </div>
-                    </>
-                  )}
+                  <label className="text-xs text-[var(--text-secondary)] font-medium block">Select Screenshot Image</label>
+                  <div className="flex items-center gap-2 overflow-x-auto pb-1 max-w-full scrollbar-thin">
+                    {productImages.map((imgUrl, i) => (
+                      <button
+                        key={i}
+                        type="button"
+                        onClick={() => updateScene(activeSceneIndex, { media_url: imgUrl })}
+                        className={`flex-none w-14 aspect-[9/16] rounded-lg overflow-hidden border transition-all ${scenes[activeSceneIndex].media_url === imgUrl
+                            ? 'border-[var(--primary)] ring-2 ring-[var(--primary)]/20'
+                            : 'border-transparent hover:border-zinc-500'
+                          }`}
+                      >
+                        <img src={imgUrl} className="w-full h-full object-cover" alt="App screenshot" />
+                      </button>
+                    ))}
+                    {productImages.length === 0 && (
+                      <span className="text-xs text-[var(--muted)]">No screenshots uploaded.</span>
+                    )}
+                  </div>
                 </div>
 
-                {/* Settings Column (Motion + Transition + Offset if Video) */}
                 <div className="space-y-3">
-                  {/* Camera Motion Style (Only applies to images) */}
-                  {scenes[activeSceneIndex].media_type === 'image' && (
+                  <div className="grid grid-cols-2 gap-3">
                     <div className="space-y-1">
-                      <label className="text-xs text-[var(--text-secondary)] font-medium">Camera Motion Style</label>
+                      <label className="text-xs text-[var(--text-secondary)] font-medium">Feature Badge</label>
+                      <input
+                        type="text"
+                        value={scenes[activeSceneIndex].featureLabel || ''}
+                        onChange={(e) => updateScene(activeSceneIndex, { featureLabel: e.target.value })}
+                        className="w-full px-3 py-1.5 bg-zinc-900 border border-[var(--border)] rounded-xl text-xs text-white"
+                        placeholder="e.g. POWERFUL"
+                      />
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-xs text-[var(--text-secondary)] font-medium">Feature Title</label>
+                      <input
+                        type="text"
+                        value={scenes[activeSceneIndex].featureDescription || ''}
+                        onChange={(e) => updateScene(activeSceneIndex, { featureDescription: e.target.value })}
+                        className="w-full px-3 py-1.5 bg-zinc-900 border border-[var(--border)] rounded-xl text-xs text-white"
+                        placeholder="e.g. Subtitle or caption"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1">
+                      <label className="text-xs text-[var(--text-secondary)] font-medium">Animation</label>
                       <div className="relative">
                         <select
-                          value={scenes[activeSceneIndex].motion}
-                          onChange={(e) => updateScene(activeSceneIndex, { motion: e.target.value })}
-                          className="w-full px-3 py-2 bg-zinc-900 border border-[var(--border)] rounded-xl text-xs text-white appearance-none cursor-pointer"
+                          value={scenes[activeSceneIndex].animation || 'spring_scale'}
+                          onChange={(e) => updateScene(activeSceneIndex, { animation: e.target.value as any })}
+                          className="w-full px-3 py-1.5 bg-zinc-900 border border-[var(--border)] rounded-xl text-xs text-white appearance-none cursor-pointer"
                         >
-                          {MOTION_EFFECTS.map((eff) => (
-                            <option key={eff.value} value={eff.value}>
-                              {eff.label}
+                          <option value="spring_scale">Spring Scale</option>
+                          <option value="highlight_pulse">Highlight Pulse</option>
+                          <option value="stagger_in">Stagger In</option>
+                          <option value="fade_in">Fade In</option>
+                          <option value="slide_up">Slide Up</option>
+                          <option value="none">None</option>
+                        </select>
+                        <ChevronDown className="w-3.5 h-3.5 text-zinc-400 absolute right-3 top-2 pointer-events-none" />
+                      </div>
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-xs text-[var(--text-secondary)] font-medium">
+                        {activeSceneIndex === 0 ? 'Transition (N/A)' : 'Transition'}
+                      </label>
+                      <div className="relative">
+                        <select
+                          value={scenes[activeSceneIndex].transition || 'fade'}
+                          disabled={activeSceneIndex === 0}
+                          onChange={(e) => updateScene(activeSceneIndex, { transition: e.target.value as any })}
+                          className="w-full px-3 py-1.5 bg-zinc-900 border border-[var(--border)] rounded-xl text-xs text-white appearance-none cursor-pointer disabled:opacity-50"
+                        >
+                          <option value="fade">Fade</option>
+                          <option value="slide_left">Slide Left</option>
+                          <option value="slide_right">Slide Right</option>
+                          <option value="slide_up">Slide Up</option>
+                          <option value="zoom_in">Zoom In</option>
+                          <option value="none">None</option>
+                        </select>
+                        <ChevronDown className="w-3.5 h-3.5 text-zinc-400 absolute right-3 top-2 pointer-events-none" />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-4 pt-2">
+                {/* Media Type Toggler */}
+                <div className="space-y-1.5">
+                  <label className="text-xs text-[var(--text-secondary)] font-medium">Media Source Type</label>
+                  <div className="grid grid-cols-2 gap-2 p-1 bg-white/5 border border-[var(--border)]/20 rounded-xl max-w-md">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const defaultImg = productImages[0] || '';
+                        updateScene(activeSceneIndex, { media_type: 'image', media_url: defaultImg });
+                      }}
+                      className={`py-1.5 text-xs font-semibold rounded-lg flex items-center justify-center gap-1.5 transition-all ${scenes[activeSceneIndex].media_type === 'image'
+                          ? 'bg-zinc-800 text-white shadow-sm'
+                          : 'text-[var(--muted)] hover:text-white'
+                        }`}
+                    >
+                      <ImageIcon className="w-3.5 h-3.5" />
+                      Product Images
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const defaultVid = productVideos[0] || '';
+                        updateScene(activeSceneIndex, { media_type: 'video', media_url: defaultVid, video_start_offset: 0 });
+                      }}
+                      className={`py-1.5 text-xs font-semibold rounded-lg flex items-center justify-center gap-1.5 transition-all ${scenes[activeSceneIndex].media_type === 'video'
+                          ? 'bg-zinc-800 text-white shadow-sm'
+                          : 'text-[var(--muted)] hover:text-white'
+                        }`}
+                    >
+                      <VideoIcon className="w-3.5 h-3.5" />
+                      Product Videos
+                    </button>
+                  </div>
+                </div>
+
+                {/* Selector List and Controls */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    {scenes[activeSceneIndex].media_type === 'image' ? (
+                      <>
+                        <label className="text-xs text-[var(--text-secondary)] font-medium block">Select Image Asset</label>
+                        <div className="flex items-center gap-2 overflow-x-auto pb-1 max-w-full scrollbar-thin">
+                          {productImages.map((imgUrl, i) => (
+                            <button
+                              key={i}
+                              type="button"
+                              onClick={() => updateScene(activeSceneIndex, { media_url: imgUrl })}
+                              className={`flex-none w-14 aspect-square rounded-lg overflow-hidden border transition-all ${scenes[activeSceneIndex].media_url === imgUrl
+                                  ? 'border-[var(--primary)] ring-2 ring-[var(--primary)]/20'
+                                  : 'border-transparent hover:border-zinc-500'
+                                }`}
+                            >
+                              <img src={imgUrl} className="w-full h-full object-cover" alt="Product thumbnail" />
+                            </button>
+                          ))}
+                          {productImages.length === 0 && (
+                            <span className="text-xs text-[var(--muted)]">No images found.</span>
+                          )}
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <label className="text-xs text-[var(--text-secondary)] font-medium block">Select Video Clip</label>
+                        <div className="flex flex-wrap gap-2">
+                          {productVideos.map((vidUrl, i) => (
+                            <button
+                              key={i}
+                              type="button"
+                              onClick={() => updateScene(activeSceneIndex, { media_url: vidUrl })}
+                              className={`px-3 py-1.5 rounded-lg border text-xs font-semibold flex items-center gap-1.5 transition-all ${scenes[activeSceneIndex].media_url === vidUrl
+                                  ? 'bg-[var(--primary)]/20 border-[var(--primary)] text-white ring-2 ring-[var(--primary)]/20'
+                                  : 'bg-white/5 border-[var(--border)] text-[var(--muted)] hover:border-zinc-500 hover:text-white'
+                                }`}
+                              title={vidUrl}
+                            >
+                              <VideoIcon className="w-3.5 h-3.5" />
+                              Clip #{i + 1}
+                            </button>
+                          ))}
+                          {productVideos.length === 0 && (
+                            <span className="text-xs text-[var(--muted)]">No crawled videos available.</span>
+                          )}
+                        </div>
+                      </>
+                    )}
+                  </div>
+
+                  {/* Settings Column (Motion + Transition + Offset if Video) */}
+                  <div className="space-y-3">
+                    {/* Camera Motion Style (Only applies to images) */}
+                    {scenes[activeSceneIndex].media_type === 'image' && (
+                      <div className="space-y-1">
+                        <label className="text-xs text-[var(--text-secondary)] font-medium">Camera Motion Style</label>
+                        <div className="relative">
+                          <select
+                            value={scenes[activeSceneIndex].motion}
+                            onChange={(e) => updateScene(activeSceneIndex, { motion: e.target.value })}
+                            className="w-full px-3 py-2 bg-zinc-900 border border-[var(--border)] rounded-xl text-xs text-white appearance-none cursor-pointer"
+                          >
+                            {MOTION_EFFECTS.map((eff) => (
+                              <option key={eff.value} value={eff.value}>
+                                {eff.label}
+                              </option>
+                            ))}
+                          </select>
+                          <ChevronDown className="w-4 h-4 text-zinc-400 absolute right-3 top-2.5 pointer-events-none" />
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Video Trim/Start Offset Control (Only applies to videos) */}
+                    {scenes[activeSceneIndex].media_type === 'video' && scenes[activeSceneIndex].media_url && (
+                      <div className="space-y-1">
+                        <div className="flex justify-between text-xs text-[var(--text-secondary)] font-medium">
+                          <span>Video Start Offset</span>
+                          <span className="font-bold text-white">{(scenes[activeSceneIndex].video_start_offset || 0).toFixed(1)}s</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="range"
+                            min="0"
+                            max="60"
+                            step="0.5"
+                            value={scenes[activeSceneIndex].video_start_offset || 0}
+                            onChange={(e) => updateScene(activeSceneIndex, { video_start_offset: parseFloat(e.target.value) })}
+                            className="flex-1 accent-[var(--secondary)] bg-zinc-800 h-1.5 rounded-lg appearance-none cursor-pointer"
+                          />
+                          <input
+                            type="number"
+                            min="0"
+                            max="360"
+                            step="0.5"
+                            value={scenes[activeSceneIndex].video_start_offset || 0}
+                            onChange={(e) => updateScene(activeSceneIndex, { video_start_offset: parseFloat(e.target.value) || 0 })}
+                            className="w-16 px-2 py-1 bg-black border border-[var(--border)] rounded-md text-xs text-center text-white"
+                          />
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Transition effect selector */}
+                    <div className="space-y-1">
+                      <label className="text-xs text-[var(--text-secondary)] font-medium">
+                        {activeSceneIndex === 0 ? 'Transition (N/A for Scene 1)' : 'Transition Effect (Into Scene)'}
+                      </label>
+                      <div className="relative">
+                        <select
+                          value={scenes[activeSceneIndex].transition_type || 'fade'}
+                          disabled={activeSceneIndex === 0}
+                          onChange={(e) => updateScene(activeSceneIndex, { transition_type: e.target.value as any })}
+                          className="w-full px-3 py-2 bg-zinc-900 border border-[var(--border)] rounded-xl text-xs text-white appearance-none cursor-pointer disabled:opacity-50"
+                        >
+                          {TRANSITION_TYPES.map((trans) => (
+                            <option key={trans.value} value={trans.value}>
+                              {trans.label}
                             </option>
                           ))}
                         </select>
                         <ChevronDown className="w-4 h-4 text-zinc-400 absolute right-3 top-2.5 pointer-events-none" />
                       </div>
                     </div>
-                  )}
-
-                  {/* Video Trim/Start Offset Control (Only applies to videos) */}
-                  {scenes[activeSceneIndex].media_type === 'video' && scenes[activeSceneIndex].media_url && (
-                    <div className="space-y-1">
-                      <div className="flex justify-between text-xs text-[var(--text-secondary)] font-medium">
-                        <span>Video Start Offset</span>
-                        <span className="font-bold text-white">{(scenes[activeSceneIndex].video_start_offset || 0).toFixed(1)}s</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <input
-                          type="range"
-                          min="0"
-                          max="60"
-                          step="0.5"
-                          value={scenes[activeSceneIndex].video_start_offset || 0}
-                          onChange={(e) => updateScene(activeSceneIndex, { video_start_offset: parseFloat(e.target.value) })}
-                          className="flex-1 accent-[var(--secondary)] bg-zinc-800 h-1.5 rounded-lg appearance-none cursor-pointer"
-                        />
-                        <input
-                          type="number"
-                          min="0"
-                          max="360"
-                          step="0.5"
-                          value={scenes[activeSceneIndex].video_start_offset || 0}
-                          onChange={(e) => updateScene(activeSceneIndex, { video_start_offset: parseFloat(e.target.value) || 0 })}
-                          className="w-16 px-2 py-1 bg-black border border-[var(--border)] rounded-md text-xs text-center text-white"
-                        />
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Transition effect selector */}
-                  <div className="space-y-1">
-                    <label className="text-xs text-[var(--text-secondary)] font-medium">
-                      {activeSceneIndex === 0 ? 'Transition (N/A for Scene 1)' : 'Transition Effect (Into Scene)'}
-                    </label>
-                    <div className="relative">
-                      <select
-                        value={scenes[activeSceneIndex].transition_type || 'fade'}
-                        disabled={activeSceneIndex === 0}
-                        onChange={(e) => updateScene(activeSceneIndex, { transition_type: e.target.value as any })}
-                        className="w-full px-3 py-2 bg-zinc-900 border border-[var(--border)] rounded-xl text-xs text-white appearance-none cursor-pointer disabled:opacity-50"
-                      >
-                        {TRANSITION_TYPES.map((trans) => (
-                          <option key={trans.value} value={trans.value}>
-                            {trans.label}
-                          </option>
-                        ))}
-                      </select>
-                      <ChevronDown className="w-4 h-4 text-zinc-400 absolute right-3 top-2.5 pointer-events-none" />
-                    </div>
                   </div>
                 </div>
               </div>
-            </div>
+            )}
 
             {/* Subtitle textarea */}
             <div className="space-y-1.5">

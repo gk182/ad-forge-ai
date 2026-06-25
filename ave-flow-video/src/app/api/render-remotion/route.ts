@@ -284,8 +284,8 @@ export async function POST(req: NextRequest) {
       copyToBundleCache(props.audioUrl);
     }
 
-    console.log('[Remotion Render] Selecting composition "AdVideo"...');
-    const compositionId = 'AdVideo';
+    const compositionId = props.compositionId === 'MobileAppVideo' ? 'MobileAppVideo' : 'AdVideo';
+    console.log(`[Remotion Render] Selecting composition "${compositionId}"...`);
     const composition = await selectComposition({
       serveUrl: bundleLocation,
       id: compositionId,

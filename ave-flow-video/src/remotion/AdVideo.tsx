@@ -43,6 +43,12 @@ export interface Scene {
   word_timings?: WordTiming[];
   audioUrl?: string;
   audioDuration?: number;
+
+  // Mobile App composition specific fields
+  featureLabel?: string;
+  featureDescription?: string;
+  animation?: 'spring_scale' | 'highlight_pulse' | 'stagger_in' | 'fade_in' | 'slide_up' | 'none';
+  transition?: 'fade' | 'slide_left' | 'slide_right' | 'slide_up' | 'zoom_in' | 'none';
 }
 
 export interface AdVideoProps {
