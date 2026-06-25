@@ -39,7 +39,6 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
       .then((data) => {
         setServerConfig({
           gemini_api_key: data.hasGeminiApiKey,
-          elevenlabs_api_key: data.hasElevenLabsApiKey,
           firecrawl_api_key: data.hasFirecrawlApiKey,
           did_api_key: data.hasDidApiKey,
         });

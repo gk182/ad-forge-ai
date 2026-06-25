@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import {
   Camera,
   Image as ImageIcon,
@@ -10,9 +10,6 @@ import {
   Upload,
   X,
   Film,
-  MessageSquareQuote,
-  Lightbulb,
-  Moon,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import type { OrderedAsset, ScriptMode } from '@/features/pipeline/pipeline.types';
@@ -36,12 +33,7 @@ interface AssetSelectorProps {
   isLoading: boolean;
 }
 
-const SCRIPT_MODES: { id: ScriptMode; label: string; icon: typeof Film; description: string }[] = [
-  { id: 'standard', label: 'Standard Promo', icon: Film, description: 'High energy ad with hook, benefits, and CTA' },
-  { id: 'customer_review', label: 'Customer Review', icon: MessageSquareQuote, description: 'First-person testimonial using real reviews' },
-  { id: 'problem_solution', label: 'Problem → Solution', icon: Lightbulb, description: 'Lead with pain points, then reveal product as answer' },
-  { id: 'asmr_unboxing', label: 'ASMR / Unboxing', icon: Moon, description: 'Calm, sensory-focused unboxing experience' },
-];
+
 
 function isLikelyVideoUrl(url: string) {
   if (!url) return false;
@@ -121,8 +113,48 @@ export function AssetSelector({ productData, onGenerateScript, isLoading }: Asse
   const [orderedAssets, setOrderedAssets] = useState<OrderedAsset[]>([]);
   const [videoKeyframesMap, setVideoKeyframesMap] = useState<Record<string, string[]>>({});
   const [extractingVideo, setExtractingVideo] = useState<string | null>(null);
-  const [customNotes, setCustomNotes] = useState('');
-  const [scriptMode, setScriptMode] = useState<ScriptMode>('standard');
+
+  // Auto-select assets on mount in a reasonable order
+  useEffect(() => {
+    if (orderedAssets.length > 0) return;
+
+    const initSelection = async () => {
+      const initial: OrderedAsset[] = [];
+      const imagePool = [productData.image, ...(productData.screenshots || [])].filter(Boolean);
+      const videoPool = (productData.videos || []).filter(Boolean);
+
+      // Select unique images (up to 3)
+      const seenImages = new Set<string>();
+      let imageCount = 0;
+      for (const img of imagePool) {
+        if (!seenImages.has(img) && imageCount < 3) {
+          initial.push({ type: 'image', url: img });
+          seenImages.add(img);
+          imageCount++;
+        }
+      }
+
+      // If we have a video, pre-select the first one and extract keyframes in background
+      if (videoPool.length > 0) {
+        const videoUrl = videoPool[0];
+        setExtractingVideo(videoUrl);
+        const toastId = toast.loading('Pre-extracting video keyframes for auto-selected video...', { id: `auto-keyframes-${videoUrl}` });
+        const keyframes = await extractVideoKeyframes(videoUrl);
+        setVideoKeyframesMap((prev) => ({ ...prev, [videoUrl]: keyframes }));
+        setExtractingVideo(null);
+        if (keyframes.length > 0) {
+          toast.success('Pre-extracted keyframes!', { id: `auto-keyframes-${videoUrl}`, icon: '📸' });
+        } else {
+          toast.dismiss(toastId);
+        }
+        initial.push({ type: 'video', url: videoUrl, keyframes });
+      }
+
+      setOrderedAssets(initial);
+    };
+
+    initSelection();
+  }, [productData]);
 
   // Build unified asset list: images first, then videos
   const crawledImages = [productData.image, ...(productData.screenshots || [])].filter(Boolean);
@@ -194,7 +226,7 @@ export function AssetSelector({ productData, onGenerateScript, isLoading }: Asse
       toast.error('Please select at least one image or video.');
       return;
     }
-    onGenerateScript(orderedAssets, scriptMode, customNotes);
+    onGenerateScript(orderedAssets, 'standard', '');
   };
 
   const hasReviews = productData.reviews && productData.reviews.length > 0;
@@ -375,61 +407,7 @@ export function AssetSelector({ productData, onGenerateScript, isLoading }: Asse
             </div>
           </div>
         )}
-
-        {/* 3. Script Mode Selector */}
-        <div className="space-y-3 pt-4 border-t border-[var(--border)]/40">
-          <h4 className="text-sm font-semibold text-white flex items-center gap-2">
-            <Sparkles className="w-4 h-4 text-amber-400" />
-            Script Style
-          </h4>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            {SCRIPT_MODES.map((mode) => {
-              const Icon = mode.icon;
-              const isActive = scriptMode === mode.id;
-              const isDisabled = mode.id === 'customer_review' && !hasReviews;
-
-              return (
-                <button
-                  key={mode.id}
-                  type="button"
-                  onClick={() => !isDisabled && setScriptMode(mode.id)}
-                  disabled={isDisabled}
-                  className={`relative p-3 rounded-xl border text-left transition-all duration-300 ${
-                    isActive
-                      ? 'bg-[var(--primary)]/15 border-[var(--primary)]/50 ring-1 ring-[var(--primary)]/20'
-                      : isDisabled
-                        ? 'bg-white/2 border-[var(--border)]/30 opacity-40 cursor-not-allowed'
-                        : 'bg-white/5 border-[var(--border)] hover:bg-white/8 hover:border-[var(--border-glow)]'
-                  }`}
-                >
-                  <Icon className={`w-4 h-4 mb-1.5 ${isActive ? 'text-[var(--primary)]' : 'text-[var(--muted)]'}`} />
-                  <p className={`text-xs font-semibold ${isActive ? 'text-white' : 'text-[var(--text-secondary)]'}`}>
-                    {mode.label}
-                  </p>
-                  <p className="text-[10px] text-[var(--muted)] mt-0.5 leading-snug">{mode.description}</p>
-                  {isDisabled && (
-                    <p className="text-[9px] text-red-400 mt-1">No reviews available</p>
-                  )}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* 4. Custom Notes */}
-        <div className="space-y-2 pt-4 border-t border-[var(--border)]/40">
-          <label htmlFor="custom-notes" className="text-sm font-semibold text-white block">
-            Custom Instructions for AI (Optional)
-          </label>
-          <textarea
-            id="custom-notes"
-            rows={3}
-            value={customNotes}
-            onChange={(e) => setCustomNotes(e.target.value)}
-            placeholder="e.g. Focus on the durability. Highlight waterproof features. Use an engaging hook in the first 3 seconds..."
-            className="w-full px-4 py-3 bg-white/5 border border-[var(--border)] rounded-xl text-white placeholder-[var(--muted)] focus:outline-none focus:border-[var(--primary)] focus:ring-1 focus:ring-[var(--primary)] transition-all"
-          />
-        </div>
+      </div>
 
         {/* Action Button */}
         <div className="flex justify-end pt-2">
@@ -453,6 +431,5 @@ export function AssetSelector({ productData, onGenerateScript, isLoading }: Asse
           </button>
         </div>
       </div>
-    </div>
   );
 }

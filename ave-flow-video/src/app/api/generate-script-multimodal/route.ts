@@ -66,22 +66,28 @@ type AssetCatalogEntry = {
 
 const DEFAULT_VARIANT_ANGLES = [
   {
-    id: 'hook_benefit',
-    label: 'Hook-first benefit demo',
+    id: 'intro',
+    label: 'App/Product Intro',
     instruction:
-      'Open with a curiosity hook, immediately show the strongest benefit, and keep the pacing sharp and direct.',
+      'High-energy product introduction showcasing key features, benefits, and call to action. Similar to a standard promotional video.',
   },
   {
-    id: 'social_proof',
-    label: 'Social proof / credibility',
+    id: 'user_review',
+    label: 'User Review Roleplay',
     instruction:
-      'Lead with trust, proof, comparison, or "people like you" language. Make it feel like a real recommendation, not an ad.',
+      'Role-play as an authentic user reviewing the product/app. Speak naturally, recount the experience of using it, and mention specific features loved by users.',
   },
   {
-    id: 'urgent_fomo',
-    label: 'Urgency / FOMO',
+    id: 'review_verification',
+    label: 'Review Verification (Fact Check)',
     instruction:
-      'Create urgency and a strong close. Make the product feel timely, limited, or too useful to skip.',
+      'Verifying customer reviews. Start by raising a common review comment (e.g., "People say this app is...") and verify if it is true, checking it against product facts.',
+  },
+  {
+    id: 'user_feelings',
+    label: 'User Feelings / Feedback',
+    instruction:
+      'A personal, emotional sharing of feelings, experiences, and feedback after using the product/app. Focus on the transformation/result.',
   },
 ];
 
@@ -250,7 +256,7 @@ async function repairJsonPayloadWithModel(model: any, rawText: string) {
   const repairPrompt = `You are a strict JSON repair tool.
 Fix the malformed Gemini output below and return valid JSON only.
 Preserve all meaningful data, including variant ids, scene media URLs, subtitles, rationales, scores, and coverage notes.
-If there are fewer than 3 variants, keep the best ones and duplicate the best available variant to reach 3.
+If there are fewer than 4 variants, keep the best ones and duplicate the best available variant to reach 4.
 Do not add commentary, markdown, or explanation.
 Do not wrap the JSON in code fences.
 Close every open string, array, and object.
@@ -634,7 +640,7 @@ Keep the variants meaningfully different in hook, pacing, or closing angle. Retu
       orderedAssetsInstruction = `\n\nIMPORTANT — SCENE ORDER (MANDATORY):\nThe user has selected assets in a specific order. You MUST generate exactly ${orderedAssets.length} scenes, one per selected asset, in this exact order:\n${assetList}\nEach scene\'s media_url and media_type MUST match the corresponding asset above. Do NOT reorder, skip, or add extra scenes.`;
     }
 
-    const userPrompt = `Create exactly 3 distinct video script variants for:
+    const userPrompt = `Create exactly 4 distinct video script variants for:
 Title: ${title}
 Description: ${description}
 Product Details: ${markdown}
@@ -655,7 +661,7 @@ Images: ${JSON.stringify(imageAssetRefs)}
 Videos: ${JSON.stringify(videoAssetRefs)}
 Rules:
 - Return JSON only.
-- Return a top-level object with a "variants" array of length 3.
+- Return a top-level object with a "variants" array of length 4.
 - Each variant must have: variant_id, creative_angle, script_text, elevenlabs_voice_id, scenes, rationale, score, coverageNotes.
 - Each variant must be meaningfully different in hook, pacing, or closing angle.
 - Each scene must have detailed and descriptive subtitle text that matches its duration (approx. 2.5 to 3.5 words per second of duration to prevent silent gaps when spoken), a realistic duration, and a media_url from the provided assets.
@@ -703,7 +709,7 @@ Rules:
     const rawVariants = Array.isArray(parsed?.variants) ? parsed.variants : [parsed];
     const normalizedVariants = rawVariants
       .filter(Boolean)
-      .slice(0, 3)
+      .slice(0, 4)
       .map((variant: unknown, index: number) => {
         const normalized = normalizeVariant(variant, index, mediaPool, assetIdToUrl, assetIdToKind);
         normalized.scenes = normalized.scenes.map((scene: GeneratedScene, sceneIndex: number) => {
@@ -723,10 +729,10 @@ Rules:
       throw new Error('Gemini returned no usable variants.');
     }
 
-    while (normalizedVariants.length < 3) {
+    while (normalizedVariants.length < 4) {
       const clone = { ...normalizedVariants[0], variant_id: `fallback_${normalizedVariants.length + 1}` };
       clone.score = Math.max(0, clone.score - normalizedVariants.length * 2);
-      clone.rationale = `${clone.rationale} Fallback copy used because the model returned fewer than 3 variants.`;
+      clone.rationale = `${clone.rationale} Fallback copy used because the model returned fewer than 4 variants.`;
       clone.coverageNotes = uniqueStrings([...clone.coverageNotes, 'Fallback variant generated from the selected script.']);
       normalizedVariants.push(clone);
     }

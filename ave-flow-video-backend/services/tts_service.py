@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
+import sys
 import numpy as np
 
 from services.alignment_service import align_audio_with_gentle
@@ -221,10 +222,19 @@ def _generate_kokoro_audio(text: str, output_path: Path, voice_id: str) -> None:
         wav_path.unlink(missing_ok=True)
 
 
+def _get_venv_bin(name: str) -> str:
+    exe_dir = Path(sys.executable).parent
+    for ext in ("", ".exe"):
+        candidate = exe_dir / f"{name}{ext}"
+        if candidate.is_file():
+            return str(candidate)
+    return name
+
+
 def _generate_edge_audio(text: str, output_path: Path, voice_id: str) -> None:
     result = subprocess.run(
         [
-            "edge-tts",
+            _get_venv_bin("edge-tts"),
             "--text",
             text,
             "--voice",
