@@ -371,8 +371,8 @@ async def scrape_url(req: CrawlRequest):
                             width, height = img.size
                             aspect_ratio = width / max(height, 1)
                             
-                            # Keep images: width >= 400, height >= 400, reasonable aspect ratio
-                            if width >= 400 and height >= 400 and 0.3 < aspect_ratio < 3.5:
+                            # Keep images: width >= 300, height >= 300, reasonable aspect ratio (especially for mobile screenshots)
+                            if width >= 300 and height >= 300 and 0.2 < aspect_ratio < 5.0:
                                 filtered_screenshots.append(img_url)
                                 
                             if len(filtered_screenshots) >= 8:
@@ -453,10 +453,11 @@ async def scrape_url(req: CrawlRequest):
                 confidence += 0.1
             confidence = min(1.0, confidence)
             
-            # Extract reviews if available (from Amazon product parse)
+            # Extract reviews if available
             reviews_list = []
-            if is_amazon and is_product:
+            if isinstance(parsed_data, dict):
                 reviews_list = parsed_data.get('reviews_list', [])
+
 
             return {
                 "title": title,

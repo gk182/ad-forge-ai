@@ -145,7 +145,7 @@ export function StudioEditor({
   const [scenes, setScenes] = useState<Scene[]>(() =>
     buildScenesFromVariant(selectedVariant, productImages, productVideos)
   );
-  const [title, setTitle] = useState('Product Spotlight');
+  const [title, setTitle] = useState('');
   const [textColor, setTextColor] = useState('#ffffff');
   const [highlightColor, setHighlightColor] = useState('#facc15');
   const [fontFamily, setFontFamily] = useState('Montserrat');
@@ -324,7 +324,7 @@ export function StudioEditor({
     }
 
     setScenes(updated);
-    
+
     // Invalidate generated output
     invalidateGeneratedOutput();
 
@@ -339,55 +339,57 @@ export function StudioEditor({
     toast.loading('Starting per-scene voice generation...', { id: 'build-toast' });
 
     const apiKeys = getApiKeys();
+    const fullScript = scenes.map((s) => s.subtitle).join(' ');
 
-    const res = await fetch('/api/voice', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        script: fullScript,
-        sceneSubtitles: scenes.map((scene) => scene.subtitle),
-        elevenLabsApiKey: apiKeys.elevenLabsApiKey || '',
-        elevenLabsVoiceId: voiceId,
-        useFreeTTS,
-      }),
-    });
+    try {
+      const res = await fetch('/api/voice', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          script: fullScript,
+          sceneSubtitles: scenes.map((scene) => scene.subtitle),
+          elevenLabsApiKey: apiKeys.elevenLabsApiKey || '',
+          elevenLabsVoiceId: voiceId,
+          useFreeTTS,
+        }),
+      });
 
-    const data = (await res.json()) as VoiceApiResponse & { error?: string };
-    if (!res.ok) throw new Error(data.error || 'Failed to generate voice');
+      const data = (await res.json()) as VoiceApiResponse & { error?: string };
+      if (!res.ok) throw new Error(data.error || 'Failed to generate voice');
 
-    const audioBase64 = data.audioBase64;
-    setAudioUrl(audioBase64);
+      const audioBase64 = data.audioBase64;
+      setAudioUrl(audioBase64);
 
-    if (Array.isArray(data.sceneAlignments) && data.sceneAlignments.length === scenes.length) {
-      setScenes((prev) =>
-        prev.map((scene, index) => {
-          const alignment = data.sceneAlignments?.find((item) => item.sceneIndex === index);
-          if (!alignment) {
-            return stripSceneAlignment(scene);
-          }
-          return {
-            ...scene,
-            duration: alignment.duration || scene.duration,
-            word_timings: alignment.wordTimings,
-          };
-        })
-      );
-    } else {
-      setScenes((prev) => prev.map(stripSceneAlignment));
-    }
+      if (Array.isArray(data.sceneAlignments) && data.sceneAlignments.length === scenes.length) {
+        setScenes((prev) =>
+          prev.map((scene, index) => {
+            const alignment = data.sceneAlignments?.find((item) => item.sceneIndex === index);
+            if (!alignment) {
+              return stripSceneAlignment(scene);
+            }
+            return {
+              ...scene,
+              duration: alignment.duration || scene.duration,
+              word_timings: alignment.wordTimings,
+            };
+          })
+        );
+      } else {
+        setScenes((prev) => prev.map(stripSceneAlignment));
+      }
 
-    const duration = data.audioDuration && data.audioDuration > 0
-      ? data.audioDuration
-      : await waitForAudioDuration(audioBase64);
-    setAudioDuration(duration);
-    setBuildPhase('voice-ready');
-    const toastMessage =
-      data.alignmentSource === 'gentle'
-        ? 'Voice track generated with Gentle alignment.'
-        : 'Voice track generated successfully.';
-    toast.success(toastMessage, { id: 'build-toast', icon: '🎙️' });
+      const duration = data.audioDuration && data.audioDuration > 0
+        ? data.audioDuration
+        : await waitForAudioDuration(audioBase64);
+      setAudioDuration(duration);
+      setBuildPhase('voice-ready');
+      const toastMessage =
+        data.alignmentSource === 'gentle'
+          ? 'Voice track generated with Gentle alignment.'
+          : 'Voice track generated successfully.';
+      toast.success(toastMessage, { id: 'build-toast', icon: '🎙️' });
 
-      return { audioBase64: 'per-scene', duration: totalDur };
+      return { audioBase64, duration };
     } catch (error: any) {
       setBuildPhase('error');
       const msg = error instanceof Error ? error.message : 'Voice generation failed';
@@ -487,11 +489,11 @@ export function StudioEditor({
     if (!playerRef.current) return;
     let accumulatedTime = 0;
     const scaleFactor = audioDuration ? audioDuration / totalPlannedDuration : 1;
-    
+
     for (let i = 0; i < index; i++) {
       accumulatedTime += scenes[i].duration;
     }
-    
+
     const targetFrame = Math.round(accumulatedTime * scaleFactor * 30);
     playerRef.current.seekTo(targetFrame);
     setActiveSceneIndex(index);
@@ -499,7 +501,7 @@ export function StudioEditor({
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 max-w-7xl mx-auto pb-20 animate-fade-in">
-      
+
       {/* LEFT: Video Player and Export Actions (Sticky container) */}
       <div className="lg:col-span-5 space-y-6 lg:sticky lg:top-24 h-fit">
         <div className="glass-card overflow-hidden flex flex-col items-center bg-black/40 border border-[var(--border)]/60 rounded-3xl p-6 shadow-2xl">
@@ -529,7 +531,7 @@ export function StudioEditor({
               controls
             />
           </div>
-          
+
           <div className="w-full mt-6 text-center text-xs text-[var(--muted)]">
             <span>Video Resolution: 1080x1920 (TikTok format)</span>
             <span className="mx-2">•</span>
@@ -584,7 +586,7 @@ export function StudioEditor({
             <Mic className="w-4 h-4 text-[var(--primary)]" />
             Voice Pipeline
           </h4>
-          
+
           {/* Audio generation */}
           <div className="space-y-3 p-3 bg-white/5 rounded-xl border border-[var(--border)]/30">
             <div className="flex items-center justify-between text-xs text-[var(--text-secondary)]">
@@ -660,11 +662,11 @@ export function StudioEditor({
                 ? 'Voice track is being synthesized automatically.'
                 : buildPhase === 'voice-ready'
                   ? 'Voice track is ready. You can render MP4 when needed.'
-                : buildPhase === 'rendering'
-                  ? 'Video is rendering with image, captions, and audio.'
-                  : hasCompletedBuild
-                    ? 'You can rebuild after editing scenes or style settings.'
-                    : 'Generate the voice first, then render MP4 manually if needed.'}
+                  : buildPhase === 'rendering'
+                    ? 'Video is rendering with image, captions, and audio.'
+                    : hasCompletedBuild
+                      ? 'You can rebuild after editing scenes or style settings.'
+                      : 'Generate the voice first, then render MP4 manually if needed.'}
             </p>
           </div>
 
@@ -697,11 +699,10 @@ export function StudioEditor({
                   key={variant.variant_id}
                   type="button"
                   onClick={() => loadVariant(index)}
-                  className={`w-full text-left p-4 rounded-2xl border transition-all ${
-                    isActive
+                  className={`w-full text-left p-4 rounded-2xl border transition-all ${isActive
                       ? 'bg-[var(--primary)]/10 border-[var(--primary)] shadow-lg shadow-[var(--primary)]/10'
                       : 'bg-white/5 border-[var(--border)] hover:border-zinc-500'
-                  }`}
+                    }`}
                 >
                   <div className="flex items-start justify-between gap-4">
                     <div>
@@ -733,7 +734,7 @@ export function StudioEditor({
 
       {/* RIGHT: Detailed Customization Options */}
       <div className="lg:col-span-7 space-y-6">
-        
+
         {/* TAB 1: Style Adjustments */}
         <div className="glass-card p-6 space-y-4">
           <h4 className="font-bold text-white flex items-center gap-2 text-base border-b border-[var(--border)]/40 pb-3">
@@ -860,11 +861,10 @@ export function StudioEditor({
                       setLayoutType(lay.id as any);
                       markRenderDirty();
                     }}
-                    className={`py-2 px-3 border rounded-xl text-xs font-semibold transition-all ${
-                      layoutType === lay.id
+                    className={`py-2 px-3 border rounded-xl text-xs font-semibold transition-all ${layoutType === lay.id
                         ? 'bg-[var(--primary)]/10 border-[var(--primary)] text-[var(--primary)]'
                         : 'border-[var(--border)] text-[var(--text-secondary)] hover:border-zinc-500'
-                    }`}
+                      }`}
                   >
                     {lay.label}
                   </button>
@@ -910,11 +910,10 @@ export function StudioEditor({
                 <button
                   key={idx}
                   onClick={() => seekToScene(idx)}
-                  className={`flex-none flex items-center gap-2 px-4 py-2 border rounded-xl transition-all ${
-                    isActive
+                  className={`flex-none flex items-center gap-2 px-4 py-2 border rounded-xl transition-all ${isActive
                       ? 'bg-zinc-800 border-zinc-500 text-white shadow-md'
                       : 'bg-black/20 border-[var(--border)] text-[var(--muted)] hover:border-zinc-700 hover:text-[var(--text-secondary)]'
-                  }`}
+                    }`}
                 >
                   {scene.media_type === 'image' ? (
                     <ImageIcon className="w-3.5 h-3.5" />
@@ -957,11 +956,10 @@ export function StudioEditor({
                       const defaultImg = productImages[0] || '';
                       updateScene(activeSceneIndex, { media_type: 'image', media_url: defaultImg });
                     }}
-                    className={`py-1.5 text-xs font-semibold rounded-lg flex items-center justify-center gap-1.5 transition-all ${
-                      scenes[activeSceneIndex].media_type === 'image'
+                    className={`py-1.5 text-xs font-semibold rounded-lg flex items-center justify-center gap-1.5 transition-all ${scenes[activeSceneIndex].media_type === 'image'
                         ? 'bg-zinc-800 text-white shadow-sm'
                         : 'text-[var(--muted)] hover:text-white'
-                    }`}
+                      }`}
                   >
                     <ImageIcon className="w-3.5 h-3.5" />
                     Product Images
@@ -972,11 +970,10 @@ export function StudioEditor({
                       const defaultVid = productVideos[0] || '';
                       updateScene(activeSceneIndex, { media_type: 'video', media_url: defaultVid, video_start_offset: 0 });
                     }}
-                    className={`py-1.5 text-xs font-semibold rounded-lg flex items-center justify-center gap-1.5 transition-all ${
-                      scenes[activeSceneIndex].media_type === 'video'
+                    className={`py-1.5 text-xs font-semibold rounded-lg flex items-center justify-center gap-1.5 transition-all ${scenes[activeSceneIndex].media_type === 'video'
                         ? 'bg-zinc-800 text-white shadow-sm'
                         : 'text-[var(--muted)] hover:text-white'
-                    }`}
+                      }`}
                   >
                     <VideoIcon className="w-3.5 h-3.5" />
                     Product Videos
@@ -996,11 +993,10 @@ export function StudioEditor({
                             key={i}
                             type="button"
                             onClick={() => updateScene(activeSceneIndex, { media_url: imgUrl })}
-                            className={`flex-none w-14 aspect-square rounded-lg overflow-hidden border transition-all ${
-                              scenes[activeSceneIndex].media_url === imgUrl
+                            className={`flex-none w-14 aspect-square rounded-lg overflow-hidden border transition-all ${scenes[activeSceneIndex].media_url === imgUrl
                                 ? 'border-[var(--primary)] ring-2 ring-[var(--primary)]/20'
                                 : 'border-transparent hover:border-zinc-500'
-                            }`}
+                              }`}
                           >
                             <img src={imgUrl} className="w-full h-full object-cover" alt="Product thumbnail" />
                           </button>
@@ -1019,11 +1015,10 @@ export function StudioEditor({
                             key={i}
                             type="button"
                             onClick={() => updateScene(activeSceneIndex, { media_url: vidUrl })}
-                            className={`px-3 py-1.5 rounded-lg border text-xs font-semibold flex items-center gap-1.5 transition-all ${
-                              scenes[activeSceneIndex].media_url === vidUrl
+                            className={`px-3 py-1.5 rounded-lg border text-xs font-semibold flex items-center gap-1.5 transition-all ${scenes[activeSceneIndex].media_url === vidUrl
                                 ? 'bg-[var(--primary)]/20 border-[var(--primary)] text-white ring-2 ring-[var(--primary)]/20'
                                 : 'bg-white/5 border-[var(--border)] text-[var(--muted)] hover:border-zinc-500 hover:text-white'
-                            }`}
+                              }`}
                             title={vidUrl}
                           >
                             <VideoIcon className="w-3.5 h-3.5" />

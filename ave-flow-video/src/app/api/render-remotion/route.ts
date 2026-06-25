@@ -11,6 +11,7 @@ import crypto from 'crypto';
 // on every render request (saves 10-15 seconds per call).
 let cachedBundleLocation: string | null = null;
 let bundlingPromise: Promise<string> | null = null;
+const activeCacheUsage = new Map<string, number>();
 
 async function getCachedBundle(): Promise<string> {
   // Return cached if available
@@ -49,6 +50,34 @@ async function getCachedBundle(): Promise<string> {
 const cacheDir = path.resolve('public', 'cache');
 if (!fs.existsSync(cacheDir)) {
   fs.mkdirSync(cacheDir, { recursive: true });
+}
+
+// Clean up any stale files in public/cache that are older than 15 minutes
+function cleanupStaleCacheFiles() {
+  try {
+    if (!fs.existsSync(cacheDir)) return;
+    const now = Date.now();
+    const thresholdMs = 15 * 60 * 1000; // 15 minutes
+    const files = fs.readdirSync(cacheDir);
+    let deletedCount = 0;
+    for (const file of files) {
+      const filePath = path.join(cacheDir, file);
+      try {
+        const stats = fs.statSync(filePath);
+        if (now - stats.mtimeMs > thresholdMs) {
+          fs.unlinkSync(filePath);
+          deletedCount++;
+        }
+      } catch (err) {
+        console.error(`[Stale Cache Cleanup Error] Failed to process ${file}`, err);
+      }
+    }
+    if (deletedCount > 0) {
+      console.log(`[Stale Cache Cleanup] Successfully deleted ${deletedCount} stale cache files.`);
+    }
+  } catch (err) {
+    console.error('[Stale Cache Cleanup Error] Failed to read cache directory', err);
+  }
 }
 
 // Helper to download a remote URL or cache a base64 data URL to public/cache and return the relative cache URL
@@ -141,6 +170,9 @@ async function downloadAndCacheAsset(url: string): Promise<string> {
 }
 
 export async function POST(req: NextRequest) {
+  let uniqueUsedCacheFilenames: string[] = [];
+  let bundleLocation: string | null = null;
+
   try {
     const props = await req.json();
 
@@ -171,6 +203,31 @@ export async function POST(req: NextRequest) {
       props.audioUrl = await downloadAndCacheAsset(props.audioUrl);
     }
 
+    // Collect all unique cache filenames used in this render to manage reference counting
+    const usedCacheFilenames: string[] = [];
+    const addCacheFile = (url: string) => {
+      if (url && url.startsWith('/cache/')) {
+        const filename = url.replace('/cache/', '');
+        usedCacheFilenames.push(filename);
+      }
+    };
+
+    props.scenes.forEach((scene: any) => {
+      if (scene.media_url) addCacheFile(scene.media_url);
+      if (scene.audioUrl) addCacheFile(scene.audioUrl);
+    });
+    if (props.audioUrl && props.audioUrl !== 'per-scene') {
+      addCacheFile(props.audioUrl);
+    }
+
+    uniqueUsedCacheFilenames = Array.from(new Set(usedCacheFilenames));
+
+    // Register active usage for the files in the global map
+    uniqueUsedCacheFilenames.forEach((filename) => {
+      const count = activeCacheUsage.get(filename) || 0;
+      activeCacheUsage.set(filename, count + 1);
+    });
+
     // Ensure output directory exists inside public/renders
     const outputDir = path.resolve('public', 'renders');
     if (!fs.existsSync(outputDir)) {
@@ -181,7 +238,7 @@ export async function POST(req: NextRequest) {
     const outputFilePath = path.join(outputDir, `${videoId}.mp4`);
 
     console.log('[Remotion Render] Getting cached bundle...');
-    const bundleLocation = await getCachedBundle();
+    bundleLocation = await getCachedBundle();
 
     // Copy any locally cached assets from public/cache to bundleLocation/cache and bundleLocation/public/cache
     // so they are hosted correctly by the Remotion bundle server during rendering.
@@ -200,7 +257,7 @@ export async function POST(req: NextRequest) {
       if (url && url.startsWith('/cache/')) {
         const filename = url.replace('/cache/', '');
         const sourcePath = path.join(cacheDir, filename);
-        
+
         for (const dir of destDirs) {
           const destPath = path.join(dir, filename);
           if (fs.existsSync(sourcePath) && !fs.existsSync(destPath)) {
@@ -260,9 +317,9 @@ export async function POST(req: NextRequest) {
       outputLocation: outputFilePath,
       inputProps: props,
       codec: 'h264',
-      crf: 18, // Lower CRF means higher quality (0-51)
+      crf: 22, // Lower CRF means higher quality (0-51)
       imageFormat: 'jpeg',
-      jpegQuality: 100,
+      jpegQuality: 90,
       pixelFormat: 'yuv420p',
       concurrency: renderConcurrency,
       timeoutInMilliseconds: 120000, // Increase global render timeout to 2 minutes
@@ -280,5 +337,54 @@ export async function POST(req: NextRequest) {
     console.error('[Remotion Render Route Error]', error);
     const message = error instanceof Error ? error.message : 'Server-side rendering failed';
     return NextResponse.json({ error: message }, { status: 500 });
+  } finally {
+    // Decrement active usage counters and clean up unused files
+    if (uniqueUsedCacheFilenames.length > 0) {
+      console.log(`[Cache Cleanup] Checking ${uniqueUsedCacheFilenames.length} assets for cleanup...`);
+      for (const filename of uniqueUsedCacheFilenames) {
+        const count = activeCacheUsage.get(filename) || 1;
+        const newCount = count - 1;
+        if (newCount <= 0) {
+          activeCacheUsage.delete(filename);
+          console.log(`[Cache Cleanup] Cleaning up asset (no active renders): ${filename}`);
+
+          // Delete from public/cache
+          const publicCachePath = path.join(cacheDir, filename);
+          try {
+            if (fs.existsSync(publicCachePath)) {
+              fs.unlinkSync(publicCachePath);
+              console.log(`[Cache Cleanup] Deleted from public/cache: ${filename}`);
+            }
+          } catch (e) {
+            console.error(`[Cache Cleanup Error] Failed to delete from public/cache: ${filename}`, e);
+          }
+
+          // Delete from bundleLocation caches
+          if (bundleLocation) {
+            const destDirs = [
+              path.join(bundleLocation, 'cache'),
+              path.join(bundleLocation, 'public', 'cache'),
+            ];
+            for (const dir of destDirs) {
+              const destPath = path.join(dir, filename);
+              try {
+                if (fs.existsSync(destPath)) {
+                  fs.unlinkSync(destPath);
+                  console.log(`[Cache Cleanup] Deleted from bundle cache: ${destPath}`);
+                }
+              } catch (e) {
+                console.error(`[Cache Cleanup Error] Failed to delete from bundle path: ${destPath}`, e);
+              }
+            }
+          }
+        } else {
+          activeCacheUsage.set(filename, newCount);
+          console.log(`[Cache Cleanup] Asset still in use by ${newCount} other render(s): ${filename}`);
+        }
+      }
+    }
+
+    // Also trigger cleanup of any stale cache files from older/other sessions
+    cleanupStaleCacheFiles();
   }
 }

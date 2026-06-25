@@ -135,7 +135,6 @@ const SceneMedia: React.FC<{
 
     return {
       transform: `scale(${scale}) translate(${translateX}px, ${translateY}px)`,
-      transition: 'transform 0.1s linear',
     };
   }, [scene, frame, durationFrames]);
 
@@ -249,7 +248,7 @@ const KaraokeSubtitles: React.FC<{
 }> = ({ text, textColor, highlightColor, durationFrames, alignedWordTimings, animationStyle = 'bounce' }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
-  
+
   const words = useMemo(() => text.split(/\s+/).filter(Boolean), [text]);
 
   const wordTimings = useMemo(() => {
@@ -305,142 +304,170 @@ const KaraokeSubtitles: React.FC<{
     return list;
   }, [wordTimings]);
 
-  // Find the active chunk based on the current frame
-  const activeChunk = useMemo(() => {
-    if (chunks.length === 0) return [];
-    const active = chunks.find((chunk) => {
-      const chunkStart = chunk[0].start;
-      const chunkEnd = chunk[chunk.length - 1].end;
-      return frame >= chunkStart && frame < chunkEnd;
+  // Group chunks into pages of 2 lines
+  const pages = useMemo(() => {
+    const list = [];
+    for (let i = 0; i < chunks.length; i += 2) {
+      const page = [];
+      if (chunks[i]) page.push(chunks[i]);
+      if (chunks[i + 1]) page.push(chunks[i + 1]);
+      list.push(page);
+    }
+    return list;
+  }, [chunks]);
+
+  // Find the active page based on the current frame
+  const activePage = useMemo(() => {
+    if (pages.length === 0) return [];
+    const active = pages.find((page) => {
+      if (page.length === 0) return false;
+      const firstChunk = page[0];
+      const lastChunk = page[page.length - 1];
+      if (firstChunk.length === 0 || lastChunk.length === 0) return false;
+      const pageStart = firstChunk[0].start;
+      const pageEnd = lastChunk[lastChunk.length - 1].end;
+      return frame >= pageStart && frame < pageEnd;
     });
     if (active) return active;
-    if (frame < chunks[0][0].start) return chunks[0];
-    return chunks[chunks.length - 1];
-  }, [chunks, frame]);
+    return pages[0];
+  }, [pages, frame]);
 
   return (
     <div
       style={{
         display: 'flex',
-        flexWrap: 'wrap',
+        flexDirection: 'column',
+        alignItems: 'center',
         justifyContent: 'center',
         padding: '0 40px',
         textAlign: 'center',
         width: '100%',
       }}
     >
-      {wordTimings.map(({ word, start, end, matched, isEstimated }, idx) => {
-        const safeDuration = Math.max(1, end - start);
-        const progress = frame <= start
-          ? 0
-          : frame >= end
-            ? 1
-            : (frame - start) / safeDuration;
-        const isActive = progress > 0 && progress < 1;
-        let transform = 'scale(1.0)';
-        let opacity = 1.0;
-        let textGlow = '';
-        let filter = 'none';
+      {activePage.map((chunk, chunkIdx) => (
+        <div
+          key={chunkIdx}
+          style={{
+            display: 'flex',
+            flexWrap: 'wrap',
+            justifyContent: 'center',
+            width: '100%',
+          }}
+        >
+          {chunk.map(({ word, start, end, matched, isEstimated }, originalIdx) => {
+            const safeDuration = Math.max(1, end - start);
+            const progress = frame <= start
+              ? 0
+              : frame >= end
+                ? 1
+                : (frame - start) / safeDuration;
+            const isActive = progress > 0 && progress < 1;
+            let transform = 'scale(1.0)';
+            let opacity = 1.0;
+            let textGlow = '';
+            let filter = 'none';
 
-        if (isActive) {
-          const age = frame - start;
+            if (isActive) {
+              const age = frame - start;
 
-          switch (animationStyle) {
-            case 'bounce':
-              const scaleVal = interpolate(age, [0, 3], [1.0, 1.15], {
-                extrapolateRight: 'clamp',
-              });
-              transform = `scale(${scaleVal})`;
-              break;
-            case 'slide_up':
-              const translateY = interpolate(age, [0, 4], [15, -10], {
-                extrapolateRight: 'clamp',
-              });
-              const finalY = age > 4
-                ? interpolate(age - 4, [0, 4], [-10, 0], { extrapolateRight: 'clamp' })
-                : translateY;
-              transform = `translateY(${finalY}px) scale(1.1)`;
-              break;
-            case 'rotate':
-              const angle = originalIdx % 2 === 0 ? -6 : 6;
-              const currentAngle = interpolate(age, [0, 3], [0, angle], {
-                extrapolateRight: 'clamp',
-              });
-              transform = `rotate(${currentAngle}deg) scale(1.15)`;
-              break;
-            case 'glow':
-              const pulseScale = interpolate(age, [0, 4], [1.0, 1.2], {
-                extrapolateRight: 'clamp',
-              });
-              transform = `scale(${pulseScale})`;
-              textGlow = `0 0 20px ${highlightColor}`;
-              break;
-            case 'fade':
-              transform = 'scale(1.05)';
-              break;
-          }
-        } else {
-          // If fade style, reduce opacity of inactive words
-          if (animationStyle === 'fade') {
-            opacity = 0.45;
-          } else {
-            opacity = 0.9;
-          }
-        }
+              switch (animationStyle) {
+                case 'bounce':
+                  const scaleVal = interpolate(age, [0, 3], [1.0, 1.15], {
+                    extrapolateRight: 'clamp',
+                  });
+                  transform = `scale(${scaleVal})`;
+                  break;
+                case 'slide_up':
+                  const translateY = interpolate(age, [0, 4], [15, -10], {
+                    extrapolateRight: 'clamp',
+                  });
+                  const finalY = age > 4
+                    ? interpolate(age - 4, [0, 4], [-10, 0], { extrapolateRight: 'clamp' })
+                    : translateY;
+                  transform = `translateY(${finalY}px) scale(1.1)`;
+                  break;
+                case 'rotate':
+                  const angle = originalIdx % 2 === 0 ? -6 : 6;
+                  const currentAngle = interpolate(age, [0, 3], [0, angle], {
+                    extrapolateRight: 'clamp',
+                  });
+                  transform = `rotate(${currentAngle}deg) scale(1.15)`;
+                  break;
+                case 'glow':
+                  const pulseScale = interpolate(age, [0, 4], [1.0, 1.2], {
+                    extrapolateRight: 'clamp',
+                  });
+                  transform = `scale(${pulseScale})`;
+                  textGlow = `0 0 20px ${highlightColor}`;
+                  break;
+                case 'fade':
+                  transform = 'scale(1.05)';
+                  break;
+              }
+            } else {
+              // If fade style, reduce opacity of inactive words
+              if (animationStyle === 'fade') {
+                opacity = 0.45;
+              } else {
+                opacity = 0.9;
+              }
+            }
 
-        if (isEstimated && !matched) {
-          filter = 'saturate(0.9)';
-        }
+            if (isEstimated && !matched) {
+              filter = 'saturate(0.9)';
+            }
 
-        return (
-          <span
-            key={originalIdx}
-            style={{
-              display: 'inline-flex',
-              position: 'relative',
-              margin: '8px 18px',
-              fontSize: '64px',
-              fontWeight: 900,
-              transform,
-              transformOrigin: 'center center',
-              opacity,
-              filter,
-              textShadow: textGlow
-                ? `0 0 20px ${highlightColor}, -4px -4px 0 #000, 4px -4px 0 #000, -4px 4px 0 #000, 4px 4px 0 #000`
-                : `
-                -4px -4px 0 #000,  
-                 4px -4px 0 #000,
-                -4px  4px 0 #000,
-                 4px  4px 0 #000,
-                 0px  4px 8px rgba(0,0,0,0.8)
-              `,
-              transition: 'transform 0.08s ease-out, color 0.05s ease-in-out, opacity 0.1s ease',
-            }}
-          >
-            <span
-              style={{
-                color: textColor,
-                display: 'inline-block',
-              }}
-            >
-              {word}
-            </span>
-            <span
-              style={{
-                position: 'absolute',
-                inset: 0,
-                width: `${Math.max(0, Math.min(1, progress)) * 100}%`,
-                overflow: 'hidden',
-                whiteSpace: 'nowrap',
-                color: highlightColor,
-                pointerEvents: 'none',
-              }}
-            >
-              <span style={{ display: 'inline-block' }}>{word}</span>
-            </span>
-          </span>
-        );
-      })}
+            return (
+              <span
+                key={originalIdx}
+                style={{
+                  display: 'inline-flex',
+                  position: 'relative',
+                  margin: '8px 18px',
+                  fontSize: '64px',
+                  fontWeight: 900,
+                  transform,
+                  transformOrigin: 'center center',
+                  opacity,
+                  filter,
+                  textShadow: textGlow
+                    ? `0 0 20px ${highlightColor}, -4px -4px 0 #000, 4px -4px 0 #000, -4px 4px 0 #000, 4px 4px 0 #000`
+                    : `
+                    -4px -4px 0 #000,  
+                     4px -4px 0 #000,
+                    -4px  4px 0 #000,
+                     4px  4px 0 #000,
+                     0px  4px 8px rgba(0,0,0,0.8)
+                  `,
+                  transition: 'transform 0.08s ease-out, color 0.05s ease-in-out, opacity 0.1s ease',
+                }}
+              >
+                <span
+                  style={{
+                    color: textColor,
+                    display: 'inline-block',
+                  }}
+                >
+                  {word}
+                </span>
+                <span
+                  style={{
+                    position: 'absolute',
+                    inset: 0,
+                    width: `${Math.max(0, Math.min(1, progress)) * 100}%`,
+                    overflow: 'hidden',
+                    whiteSpace: 'nowrap',
+                    color: highlightColor,
+                    pointerEvents: 'none',
+                  }}
+                >
+                  <span style={{ display: 'inline-block' }}>{word}</span>
+                </span>
+              </span>
+            );
+          })}
+        </div>
+      ))}
     </div>
   );
 };
@@ -471,185 +498,196 @@ const SceneContainer: React.FC<{
   subtitleStyle = 'bounce',
   fps,
 }) => {
-  const frame = useCurrentFrame();
+    const frame = useCurrentFrame();
+    const env = useRemotionEnvironment();
 
-  const transitionStyle = useMemo(() => {
-    // 1. Entry Transition (first 15 frames, if not first scene)
-    if (frame < transitionDuration && idx > 0) {
-      const transType = scene.transition_type || 'fade';
-      if (transType === 'none') return {};
+    const transitionStyle = useMemo(() => {
+      // 1. Entry Transition (first 15 frames, if not first scene)
+      if (frame < transitionDuration && idx > 0) {
+        const transType = scene.transition_type || 'fade';
+        if (transType === 'none') return {};
 
-      const t = interpolate(frame, [0, transitionDuration], [0, 1], {
-        extrapolateRight: 'clamp',
-      });
+        const t = interpolate(frame, [0, transitionDuration], [0, 1], {
+          extrapolateRight: 'clamp',
+        });
 
-      switch (transType) {
-        case 'fade':
-          return { opacity: t };
-        case 'slide_left':
-          return { transform: `translateX(${interpolate(t, [0, 1], [1080, 0])}px)` };
-        case 'slide_right':
-          return { transform: `translateX(${interpolate(t, [0, 1], [-1080, 0])}px)` };
-        case 'slide_up':
-          return { transform: `translateY(${interpolate(t, [0, 1], [1920, 0])}px)` };
-        case 'slide_down':
-          return { transform: `translateY(${interpolate(t, [0, 1], [-1920, 0])}px)` };
-        case 'zoom_in':
-          return {
-            transform: `scale(${interpolate(t, [0, 1], [0.4, 1.0])})`,
-            opacity: t,
-          };
-        default:
-          return {};
+        switch (transType) {
+          case 'fade':
+            return { opacity: t };
+          case 'slide_left':
+            return { transform: `translateX(${interpolate(t, [0, 1], [1080, 0])}px)` };
+          case 'slide_right':
+            return { transform: `translateX(${interpolate(t, [0, 1], [-1080, 0])}px)` };
+          case 'slide_up':
+            return { transform: `translateY(${interpolate(t, [0, 1], [1920, 0])}px)` };
+          case 'slide_down':
+            return { transform: `translateY(${interpolate(t, [0, 1], [-1920, 0])}px)` };
+          case 'zoom_in':
+            return {
+              transform: `scale(${interpolate(t, [0, 1], [0.4, 1.0])})`,
+              opacity: t,
+            };
+          default:
+            return {};
+        }
       }
-    }
 
-    // 2. Exit Transition (last 15 frames, if not last scene)
-    const exitFrame = frame - durationFrames;
-    if (exitFrame >= 0 && nextScene) {
-      const nextTransType = nextScene.transition_type || 'fade';
-      if (nextTransType === 'none') return {};
+      // 2. Exit Transition (last 15 frames, if not last scene)
+      const exitFrame = frame - durationFrames;
+      if (exitFrame >= 0 && nextScene) {
+        const nextTransType = nextScene.transition_type || 'fade';
+        if (nextTransType === 'none') return {};
 
-      const t = interpolate(exitFrame, [0, transitionDuration], [0, 1], {
-        extrapolateRight: 'clamp',
-      });
+        const t = interpolate(exitFrame, [0, transitionDuration], [0, 1], {
+          extrapolateRight: 'clamp',
+        });
 
-      switch (nextTransType) {
-        case 'fade':
-          return { opacity: interpolate(t, [0, 1], [1, 0]) };
-        case 'slide_left':
-          return { transform: `translateX(${interpolate(t, [0, 1], [0, -1080])}px)` };
-        case 'slide_right':
-          return { transform: `translateX(${interpolate(t, [0, 1], [0, 1080])}px)` };
-        case 'slide_up':
-          return { transform: `translateY(${interpolate(t, [0, 1], [0, -1920])}px)` };
-        case 'slide_down':
-          return { transform: `translateY(${interpolate(t, [0, 1], [0, 1920])}px)` };
-        case 'zoom_in':
-          return {
-            transform: `scale(${interpolate(t, [0, 1], [1.0, 1.6])})`,
-            opacity: interpolate(t, [0, 1], [1, 0]),
-          };
-        default:
-          return {};
+        switch (nextTransType) {
+          case 'fade':
+            return { opacity: interpolate(t, [0, 1], [1, 0]) };
+          case 'slide_left':
+            return { transform: `translateX(${interpolate(t, [0, 1], [0, -1080])}px)` };
+          case 'slide_right':
+            return { transform: `translateX(${interpolate(t, [0, 1], [0, 1080])}px)` };
+          case 'slide_up':
+            return { transform: `translateY(${interpolate(t, [0, 1], [0, -1920])}px)` };
+          case 'slide_down':
+            return { transform: `translateY(${interpolate(t, [0, 1], [0, 1920])}px)` };
+          case 'zoom_in':
+            return {
+              transform: `scale(${interpolate(t, [0, 1], [1.0, 1.6])})`,
+              opacity: interpolate(t, [0, 1], [1, 0]),
+            };
+          default:
+            return {};
+        }
       }
-    }
 
-    return {};
-  }, [frame, durationFrames, transitionDuration, idx, scene.transition_type, nextScene]);
+      return {};
+    }, [frame, durationFrames, transitionDuration, idx, scene.transition_type, nextScene]);
 
-  return (
-    <AbsoluteFill
-      style={{
-        overflow: 'hidden',
-        ...transitionStyle,
-      }}
-    >
-      {/* Ambient Blurred Background (Removes black sides for mismatching formats) */}
-      <div
+    return (
+      <AbsoluteFill
         style={{
-          position: 'absolute',
-          width: '120%',
-          height: '120%',
-          top: '-10%',
-          left: '-10%',
-          filter: 'blur(40px) brightness(0.4)',
-          opacity: 0.7,
-          transform: 'scale(1.1)',
+          overflow: 'hidden',
+          ...transitionStyle,
         }}
       >
-        {scene.media_type === 'video' ? (
-          <Video
-            src={resolveMediaUrl(scene.media_url)}
-            style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-            muted
-            loop
-            delayRenderTimeoutInMilliseconds={120000}
-          />
-        ) : (
-          <Img
-            src={resolveMediaUrl(scene.media_url)}
-            style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-          />
+        {/* Ambient Blurred Background (Removes black sides for mismatching formats) */}
+        {layoutType === 'splitscreen' && (
+          <div
+            style={{
+              position: 'absolute',
+              width: '120%',
+              height: '120%',
+              top: '-10%',
+              left: '-10%',
+              filter: 'blur(40px) brightness(0.4)',
+              opacity: 0.7,
+              transform: 'scale(1.1)',
+            }}
+          >
+            {scene.media_type === 'video' ? (
+              env.isRendering ? (
+                <OffthreadVideo
+                  src={resolveMediaUrl(scene.media_url)}
+                  style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                  muted
+                />
+              ) : (
+                <Video
+                  src={resolveMediaUrl(scene.media_url)}
+                  style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                  muted
+                  loop
+                  delayRenderTimeoutInMilliseconds={120000}
+                />
+              )
+            ) : (
+              <Img
+                src={resolveMediaUrl(scene.media_url)}
+                style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+              />
+            )}
+          </div>
         )}
-      </div>
 
-      {/* Main Content Area (Respects layouts) */}
-      <div
-        style={{
-          position: 'absolute',
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          padding: layoutType === 'splitscreen' ? '120px 40px' : '0',
-        }}
-      >
-        <div
-          style={{
-            width: '100%',
-            height: '100%',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            overflow: 'hidden',
-            borderRadius: layoutType === 'splitscreen' ? '24px' : '0px',
-            boxShadow:
-              layoutType === 'splitscreen'
-                ? '0 25px 50px -12px rgba(0, 0, 0, 0.5)'
-                : 'none',
-            border:
-              layoutType === 'splitscreen'
-                ? '2px solid rgba(255,255,255,0.1)'
-                : 'none',
-          }}
-        >
-          <SceneMedia scene={scene} durationFrames={durationFrames} fps={fps} />
-        </div>
-      </div>
-
-      {/* Dark gradient vignette overlay */}
-      <div
-        style={{
-          position: 'absolute',
-          bottom: 0,
-          left: 0,
-          right: 0,
-          height: '45%',
-          background: 'linear-gradient(to top, rgba(0,0,0,0.95) 0%, rgba(0,0,0,0.5) 50%, rgba(0,0,0,0) 100%)',
-          pointerEvents: 'none',
-        }}
-      />
-
-      {/* 3. Subtitles (Only render in active zone, not in extended transition overlap) */}
-      {frame < durationFrames && (
+        {/* Main Content Area (Respects layouts) */}
         <div
           style={{
             position: 'absolute',
-            bottom: layoutType === 'splitscreen' ? '180px' : '220px',
+            top: 0,
             left: 0,
             right: 0,
+            bottom: 0,
             display: 'flex',
+            alignItems: 'center',
             justifyContent: 'center',
-            zIndex: 10,
+            padding: layoutType === 'splitscreen' ? '120px 40px' : '0',
           }}
         >
-          <KaraokeSubtitles
-            text={scene.subtitle}
-            textColor={textColor}
-            highlightColor={highlightColor}
-            durationFrames={durationFrames}
-            alignedWordTimings={scene.word_timings}
-            animationStyle={subtitleStyle}
-          />
+          <div
+            style={{
+              width: '100%',
+              height: '100%',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              overflow: 'hidden',
+              borderRadius: layoutType === 'splitscreen' ? '24px' : '0px',
+              boxShadow:
+                layoutType === 'splitscreen'
+                  ? '0 25px 50px -12px rgba(0, 0, 0, 0.5)'
+                  : 'none',
+              border:
+                layoutType === 'splitscreen'
+                  ? '2px solid rgba(255,255,255,0.1)'
+                  : 'none',
+            }}
+          >
+            <SceneMedia scene={scene} durationFrames={durationFrames} fps={fps} />
+          </div>
         </div>
-      )}
-    </AbsoluteFill>
-  );
-};
+
+        {/* Dark gradient vignette overlay */}
+        <div
+          style={{
+            position: 'absolute',
+            bottom: 0,
+            left: 0,
+            right: 0,
+            height: '45%',
+            background: 'linear-gradient(to top, rgba(0,0,0,0.95) 0%, rgba(0,0,0,0.5) 50%, rgba(0,0,0,0) 100%)',
+            pointerEvents: 'none',
+          }}
+        />
+
+        {/* 3. Subtitles (Only render in active zone, not in extended transition overlap) */}
+        {frame < durationFrames && (
+          <div
+            style={{
+              position: 'absolute',
+              bottom: layoutType === 'splitscreen' ? '180px' : '220px',
+              left: 0,
+              right: 0,
+              display: 'flex',
+              justifyContent: 'center',
+              zIndex: 10,
+            }}
+          >
+            <KaraokeSubtitles
+              text={scene.subtitle}
+              textColor={textColor}
+              highlightColor={highlightColor}
+              durationFrames={durationFrames}
+              alignedWordTimings={scene.word_timings}
+              animationStyle={subtitleStyle}
+            />
+          </div>
+        )}
+      </AbsoluteFill>
+    );
+  };
 
 export const AdVideo: React.FC<AdVideoProps> = ({
   title = '',
@@ -702,7 +740,7 @@ export const AdVideo: React.FC<AdVideoProps> = ({
   const sceneTimings = useMemo(() => {
     let currentFrame = 0;
     const transitionFrames = 15; // 0.5 seconds transition
-    
+
     return scenes.map((scene, idx) => {
       const scenePlannedDuration = (audioUrl === 'per-scene' && scene.audioDuration)
         ? Math.max(scene.duration, scene.audioDuration)
@@ -712,7 +750,7 @@ export const AdVideo: React.FC<AdVideoProps> = ({
         30, // Minimum 1 second per scene
         Math.round(scenePlannedDuration * scaleFactor * fps)
       );
-      
+
       const startFrame = currentFrame;
       // Normal frame pointer progression
       currentFrame += durationFrames;
@@ -732,8 +770,8 @@ export const AdVideo: React.FC<AdVideoProps> = ({
 
   const frame = useCurrentFrame();
   // Total frames is the end of the last scene
-  const totalFrames = sceneTimings.length > 0 
-    ? sceneTimings[sceneTimings.length - 1].startFrame + sceneTimings[sceneTimings.length - 1].durationFrames 
+  const totalFrames = sceneTimings.length > 0
+    ? sceneTimings[sceneTimings.length - 1].startFrame + sceneTimings[sceneTimings.length - 1].durationFrames
     : 1;
 
   // Bottom progress bar width
