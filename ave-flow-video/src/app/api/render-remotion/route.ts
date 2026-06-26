@@ -335,7 +335,9 @@ export async function POST(req: NextRequest) {
     let storage: 'local' | 'cloudflare-r2' = 'local';
     let objectKey: string | null = null;
 
-    if (canUploadToR2()) {
+    const r2UploadConfigured = canUploadToR2();
+
+    if (r2UploadConfigured) {
       const uploadStartedAt = Date.now();
 
       try {
@@ -353,6 +355,13 @@ export async function POST(req: NextRequest) {
       console.log('[Remotion Render] R2 upload skipped because configuration is incomplete.');
     }
 
+    const message =
+      storage === 'cloudflare-r2'
+        ? `Uploaded to Cloudflare R2: ${videoUrl}`
+        : r2UploadConfigured
+          ? 'Rendered locally because Cloudflare R2 upload failed.'
+          : 'Rendered locally because Cloudflare R2 is not configured.';
+
     return NextResponse.json({
       success: true,
       videoUrl,
@@ -360,6 +369,7 @@ export async function POST(req: NextRequest) {
       duration,
       storage,
       objectKey,
+      message,
     });
   } catch (error) {
     console.error('[Remotion Render Route Error]', error);

@@ -90,6 +90,17 @@ const MOBILE_APP_PRESETS = [
 
 type BuildPhase = 'idle' | 'generating-voice' | 'voice-ready' | 'rendering' | 'completed' | 'error';
 
+type RenderStorage = 'local' | 'cloudflare-r2';
+
+interface RenderResult {
+  videoUrl: string;
+  filename: string;
+  duration: number;
+  storage: RenderStorage;
+  objectKey: string | null;
+  message?: string;
+}
+
 interface VoiceSceneAlignment {
   sceneIndex: number;
   subtitle: string;
@@ -105,6 +116,17 @@ interface VoiceApiResponse {
   alignment?: WordTiming[];
   sceneAlignments?: VoiceSceneAlignment[];
   alignmentSource?: string;
+}
+
+interface RenderApiResponse {
+  success?: boolean;
+  videoUrl: string;
+  filename: string;
+  duration: number;
+  storage: RenderStorage;
+  objectKey: string | null;
+  message?: string;
+  error?: string;
 }
 
 function isLikelyVideoUrl(url: string) {
@@ -249,6 +271,7 @@ export function StudioEditor({
 
   // Export state
   const [exportUrl, setExportUrl] = useState('');
+  const [renderResult, setRenderResult] = useState<RenderResult | null>(null);
   const [buildPhase, setBuildPhase] = useState<BuildPhase>(initialAudioUrl ? 'voice-ready' : 'idle');
 
   // active scene being edited
@@ -295,6 +318,7 @@ export function StudioEditor({
     setAudioUrl('');
     setAudioDuration(undefined);
     setExportUrl('');
+    setRenderResult(null);
     setBuildPhase('idle');
     setScenes((prev) =>
       prev.map((scene) => ({
@@ -315,6 +339,7 @@ export function StudioEditor({
     setActiveVariantIndex(index);
     setActiveSceneIndex(0);
     setExportUrl('');
+    setRenderResult(null);
     toast.success(`Loaded ${nextVariant.creative_angle}`, { icon: '🧩' });
 
     if (cachedAudio[index]) {
@@ -323,6 +348,7 @@ export function StudioEditor({
       setAudioUrl(cached.audioUrl);
       setAudioDuration(cached.audioDuration);
       setBuildPhase('voice-ready');
+      setRenderResult(null);
       if (videoType === 'mobile_app') {
         setPreset((nextVariant as any).preset || 'hero_floating');
         setPrimaryColor((nextVariant as any).primaryColor || '#6366f1');
@@ -334,6 +360,7 @@ export function StudioEditor({
       setAudioUrl('');
       setAudioDuration(undefined);
       setBuildPhase('idle');
+      setRenderResult(null);
       if (videoType === 'mobile_app') {
         setPreset((nextVariant as any).preset || 'hero_floating');
         setPrimaryColor((nextVariant as any).primaryColor || '#6366f1');
@@ -542,6 +569,7 @@ export function StudioEditor({
   const renderVideo = async (audioBase64: string, duration: number) => {
     setBuildPhase('rendering');
     setExportUrl('');
+    setRenderResult(null);
     toast.loading('Rendering full video...', { id: 'build-toast' });
 
     const payload = videoType === 'mobile_app'
@@ -577,13 +605,28 @@ export function StudioEditor({
       body: JSON.stringify(payload),
     });
 
-    const data = await res.json();
+    const data = (await res.json()) as RenderApiResponse;
     if (!res.ok) throw new Error(data.error || 'Render failed');
 
+    const nextRenderResult: RenderResult = {
+      videoUrl: data.videoUrl,
+      filename: data.filename,
+      duration: data.duration,
+      storage: data.storage,
+      objectKey: data.objectKey,
+      message: data.message,
+    };
+
     setExportUrl(data.videoUrl);
+    setRenderResult(nextRenderResult);
     setBuildPhase('completed');
-    toast.success('Full video built successfully.', { id: 'build-toast', icon: '🎉' });
-    return data.videoUrl as string;
+    toast.success(
+      data.storage === 'cloudflare-r2'
+        ? 'Uploaded to Cloudflare R2.'
+        : 'Saved locally on this machine.',
+      { id: 'build-toast', icon: '🎉' }
+    );
+    return nextRenderResult;
   };
 
   const renderCurrentVideo = async () => {
@@ -623,9 +666,22 @@ export function StudioEditor({
 
   const markRenderDirty = () => {
     setExportUrl('');
+    setRenderResult(null);
     if (buildPhase === 'completed') {
       setBuildPhase('idle');
     }
+  };
+
+  const getAbsoluteVideoUrl = (url: string) => {
+    if (/^https?:\/\//i.test(url)) {
+      return url;
+    }
+
+    if (typeof window === 'undefined') {
+      return url;
+    }
+
+    return new URL(url, window.location.origin).toString();
   };
 
   useEffect(() => {
@@ -851,6 +907,73 @@ export function StudioEditor({
                         ? 'You can rebuild after editing scenes or style settings.'
                         : 'Generate the voice first, then render MP4 manually if needed.'}
               </p>
+
+              {renderResult && (
+                <div className="rounded-xl border border-[var(--border)]/60 bg-white/5 p-4 space-y-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="space-y-0.5">
+                      <p className="text-[10px] uppercase tracking-wider text-[var(--muted)]">
+                        Render Output
+                      </p>
+                      <p className="text-sm font-semibold text-white">
+                        {renderResult.storage === 'cloudflare-r2' ? 'Cloudflare R2' : 'Local storage'}
+                      </p>
+                    </div>
+                    <span
+                      className={`px-2.5 py-1 rounded-full text-[11px] font-semibold ${
+                        renderResult.storage === 'cloudflare-r2'
+                          ? 'bg-cyan-500/15 text-cyan-300 border border-cyan-500/30'
+                          : 'bg-amber-500/15 text-amber-300 border border-amber-500/30'
+                      }`}
+                    >
+                      {renderResult.storage === 'cloudflare-r2' ? 'Uploaded' : 'Local only'}
+                    </span>
+                  </div>
+
+                  <div className="space-y-2">
+                    <a
+                      href={getAbsoluteVideoUrl(renderResult.videoUrl)}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="block text-xs break-all text-[var(--primary)] underline underline-offset-4 hover:opacity-80"
+                    >
+                      {getAbsoluteVideoUrl(renderResult.videoUrl)}
+                    </a>
+
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          try {
+                            await navigator.clipboard.writeText(getAbsoluteVideoUrl(renderResult.videoUrl));
+                            toast.success('Link copied to clipboard.');
+                          } catch {
+                            toast.error('Failed to copy link.');
+                          }
+                        }}
+                        className="px-3 py-1.5 rounded-lg bg-white/10 border border-[var(--border)] text-xs text-white hover:bg-white/15 transition-colors"
+                      >
+                        Copy link
+                      </button>
+
+                      <a
+                        href={getAbsoluteVideoUrl(renderResult.videoUrl)}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="px-3 py-1.5 rounded-lg bg-[var(--primary)] text-xs text-white hover:brightness-110 transition-colors"
+                      >
+                        Open
+                      </a>
+                    </div>
+
+                    {renderResult.message && (
+                      <p className="text-[11px] text-[var(--muted)] leading-relaxed">
+                        {renderResult.message}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Export Render */}
